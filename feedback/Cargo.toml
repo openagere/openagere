@@ -1,0 +1,19 @@
+[package]
+name = "agere-feedback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+agere-login = { workspace = true }
+agere-protocol = { workspace = true }
+sentry = { version = "0.46" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

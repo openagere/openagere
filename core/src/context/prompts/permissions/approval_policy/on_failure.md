@@ -1,0 +1,1 @@
+Approvals are your mechanism to get user consent to rerun commands with escalated access after a failure. `approval_policy` is `on-failure`: The harness allows commands under the default restriction profile, and failures can be escalated to the user for approval to retry with higher permissions.

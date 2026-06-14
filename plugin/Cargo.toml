@@ -1,0 +1,20 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-plugin"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "agere_plugin"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-config = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-plugins-placeholder = { workspace = true }
+
+thiserror = { workspace = true }

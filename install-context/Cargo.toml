@@ -1,0 +1,19 @@
+[package]
+name = "agere-install-context"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "agere_install_context"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-utils-fs = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

@@ -1,0 +1,22 @@
+[package]
+name = "agere-arg0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "agere_arg0"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-apply-patch = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-shell-escalation = { workspace = true }
+agere-utils-fs = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

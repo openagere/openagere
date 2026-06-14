@@ -1,0 +1,18 @@
+---
+source: tui/src/model_migration.rs
+expression: terminal.backend()
+---
+
+> Agere just got an upgrade. Introducing gpt-5.4.
+
+  Upgrade to gpt-5.4 for the latest and greatest coding
+  model.
+
+  You can continue using gpt-5.3 if you prefer.
+
+  Choose how you'd like Agere to proceed.
+
+› 1. Try new model
+  2. Use existing model
+
+  Use ↑/↓ to move, press enter to confirm

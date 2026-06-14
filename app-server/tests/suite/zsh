@@ -1,0 +1,73 @@
+#!/usr/bin/env dotslash
+
+// This is the patched zsh fork corresponding to
+// `shell-escalation/patches/zsh-exec-wrapper.patch`.
+// Fetching the prebuilt version via DotSlash makes it easier to write
+// integration tests that exercise the zsh fork behavior in app-server tests.
+//
+// This checked-in fixture is still pinned to the latest released bundle that
+// contains this binary. New releases publish standalone `agere-zsh-*.tar.gz`
+// assets plus a generated `agere-zsh` DotSlash release asset, so this file can
+// be retargeted when a newer fork build needs to be exercised in tests.
+{
+  "name": "agere-zsh",
+  "platforms": {
+    // macOS 13 builds (and therefore x86_64) were dropped in
+    // https://github.com/openagere/openagere/pull/7295, so we only provide an
+    // Apple Silicon build for now.
+    "macos-aarch64": {
+      "size": 53771483,
+      "hash": "blake3",
+      "digest": "ff664f63f5e1fa62762c9aff0aafa66cf196faf9b157f98ec98f59c152fc7bd3",
+      "format": "tar.gz",
+      "path": "package/vendor/aarch64-apple-darwin/zsh/macos-15/zsh",
+      "providers": [
+        {
+          "url": "https://github.com/openagere/openagere/releases/download/rust-v0.104.0/agere-shell-tool-mcp-npm-0.104.0.tgz"
+        },
+        {
+          "type": "github-release",
+          "repo": "openai/agere",
+          "tag": "rust-v0.104.0",
+          "name": "agere-shell-tool-mcp-npm-0.104.0.tgz"
+        }
+      ]
+    },
+    "linux-x86_64": {
+      "size": 53771483,
+      "hash": "blake3",
+      "digest": "ff664f63f5e1fa62762c9aff0aafa66cf196faf9b157f98ec98f59c152fc7bd3",
+      "format": "tar.gz",
+      "path": "package/vendor/x86_64-unknown-linux-musl/zsh/ubuntu-24.04/zsh",
+      "providers": [
+        {
+          "url": "https://github.com/openagere/openagere/releases/download/rust-v0.104.0/agere-shell-tool-mcp-npm-0.104.0.tgz"
+        },
+        {
+          "type": "github-release",
+          "repo": "openai/agere",
+          "tag": "rust-v0.104.0",
+          "name": "agere-shell-tool-mcp-npm-0.104.0.tgz"
+        }
+      ]
+    },
+    "linux-aarch64": {
+      "size": 53771483,
+      "hash": "blake3",
+      "digest": "ff664f63f5e1fa62762c9aff0aafa66cf196faf9b157f98ec98f59c152fc7bd3",
+      "format": "tar.gz",
+      "path": "package/vendor/aarch64-unknown-linux-musl/zsh/ubuntu-24.04/zsh",
+      "providers": [
+        {
+          "url": "https://github.com/openagere/openagere/releases/download/rust-v0.104.0/agere-shell-tool-mcp-npm-0.104.0.tgz"
+        },
+        {
+          "type": "github-release",
+          "repo": "openai/agere",
+          "tag": "rust-v0.104.0",
+          "name": "agere-shell-tool-mcp-npm-0.104.0.tgz"
+        }
+      ]
+    },
+  }
+}

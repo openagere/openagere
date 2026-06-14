@@ -1,0 +1,44 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-memories-write"
+version.workspace = true
+
+[lib]
+name = "agere_memories_write"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+agere-core = { workspace = true }
+agere-config = { workspace = true }
+agere-features = { workspace = true }
+agere-git-utils = { workspace = true }
+agere-login = { workspace = true }
+agere-otel = { workspace = true }
+agere-protocol = { workspace = true }
+agere-rollout = { workspace = true }
+agere-rollout-trace = { workspace = true }
+agere-secrets = { workspace = true }
+agere-state = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-common = { workspace = true }
+agere-utils-output-truncation = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["fs", "rt", "sync", "time"] }
+tracing = { workspace = true, features = ["log"] }
+uuid = { workspace = true, features = ["v4", "v5"] }
+
+[dev-dependencies]
+agere-models-manager = { workspace = true }
+core_test_support = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros"] }
+wiremock = { workspace = true }

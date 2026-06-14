@@ -1,0 +1,51 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-core-plugins"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "agere_core_plugins"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-app-server-protocol = { workspace = true }
+agere-config = { workspace = true }
+agere-core-skills = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-git-utils = { workspace = true }
+agere-login = { workspace = true }
+agere-model-provider = { workspace = true }
+agere-otel = { workspace = true }
+agere-plugin = { workspace = true }
+agere-protocol = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-plugins-placeholder = { workspace = true }
+
+base64 = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+flate2 = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+libc = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+wiremock = { workspace = true }

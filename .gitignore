@@ -1,0 +1,54 @@
+# Rust build output
+/target/
+/target-*/
+
+# Editor
+.vscode/
+.idea/
+.history/
+.zed/
+*.swp
+*~
+
+# CLI tool configs
+CLAUDE.md
+.claude/
+AGENTS.override.md
+
+# Caches
+.cache/
+
+# Logs
+*.log
+
+# Environment
+.env*
+!.env.example
+.venv/
+
+# Local configuration with secrets
+.openagere/
+
+# OS
+.DS_Store
+Thumbs.db
+Icon?
+.Spotlight-V100/
+
+# Nix
+.direnv
+.envrc
+result
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Coverage
+coverage/
+
+# TypeScript buildinfo (if any)
+*.tsbuildinfo
+
+# npm build artifacts
+dist/npm/*.tgz

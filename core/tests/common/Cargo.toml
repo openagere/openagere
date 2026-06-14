@@ -1,0 +1,49 @@
+[package]
+name = "core_test_support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+assert_cmd = { workspace = true }
+base64 = { workspace = true }
+agere-arg0 = { workspace = true }
+agere-config = { workspace = true }
+agere-core = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-features = { workspace = true }
+agere-login = { workspace = true }
+agere-model-provider-info = { workspace = true }
+agere-models-manager = { workspace = true }
+agere-protocol = { workspace = true }
+agere-utils-cargo-bin = { workspace = true }
+agere-utils-fs = { workspace = true }
+
+ctor = { workspace = true }
+futures = { workspace = true }
+notify = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+regex-lite = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["net", "time"] }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
+walkdir = { workspace = true }
+wiremock = { workspace = true }
+shlex = { workspace = true }
+zstd = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+reqwest = { workspace = true }

@@ -1,0 +1,72 @@
+use agere_config::MarketplaceConfigUpdate;
+use agere_config::record_user_marketplace;
+use agere_core_plugins::installed_marketplaces::marketplace_install_root;
+use anyhow::Result;
+use predicates::str::contains;
+use std::path::Path;
+use tempfile::TempDir;
+
+fn agere_command(agere_home: &Path) -> Result<assert_cmd::Command> {
+    let mut cmd = assert_cmd::Command::new(agere_utils_cargo_bin::cargo_bin("openagere")?);
+    cmd.env("AGERE_HOME", agere_home);
+    Ok(cmd)
+}
+
+fn configured_marketplace_update() -> MarketplaceConfigUpdate<'static> {
+    MarketplaceConfigUpdate {
+        last_updated: "2026-04-13T00:00:00Z",
+        last_revision: None,
+        source_type: "git",
+        source: "https://github.com/owner/repo.git",
+        ref_name: Some("main"),
+        sparse_paths: &[],
+    }
+}
+
+fn write_installed_marketplace(agere_home: &Path, marketplace_name: &str) -> Result<()> {
+    let root = marketplace_install_root(agere_home).join(marketplace_name);
+    std::fs::create_dir_all(root.join(".agents/plugins"))?;
+    std::fs::write(root.join(".agents/plugins/marketplace.json"), "{}")?;
+    std::fs::write(root.join("marker.txt"), "installed")?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn marketplace_remove_deletes_config_and_installed_root() -> Result<()> {
+    let agere_home = TempDir::new()?;
+    record_user_marketplace(agere_home.path(), "debug", &configured_marketplace_update())?;
+    write_installed_marketplace(agere_home.path(), "debug")?;
+
+    agere_command(agere_home.path())?
+        .args(["plugin", "marketplace", "remove", "debug"])
+        .assert()
+        .success()
+        .stdout(contains("Removed marketplace `debug`."));
+
+    let config_path = agere_home.path().join("config.toml");
+    let config = std::fs::read_to_string(config_path)?;
+    assert!(!config.contains("[marketplaces.debug]"));
+    assert!(
+        !marketplace_install_root(agere_home.path())
+            .join("debug")
+            .exists()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn marketplace_remove_rejects_unknown_marketplace() -> Result<()> {
+    let agere_home = TempDir::new()?;
+
+    agere_command(agere_home.path())?
+        .args(["plugin", "marketplace", "remove", "debug"])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "marketplace `debug` is not configured or installed",
+        ));
+
+    Ok(())
+}

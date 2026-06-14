@@ -1,0 +1,12 @@
+# Normalize text files to LF in this repository. This avoids Windows
+# core.autocrlf settings making generated fixtures appear modified.
+* text=auto eol=lf
+
+# Enforce LF line endings for files with shebangs to prevent
+# "#!/usr/bin/env node\r" breaking on Linux.
+*.js text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+
+core/config.schema.json linguist-generated
+hooks/schema/generated/** linguist-generated

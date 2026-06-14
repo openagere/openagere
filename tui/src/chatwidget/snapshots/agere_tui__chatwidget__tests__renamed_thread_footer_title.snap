@@ -1,0 +1,9 @@
+---
+source: tui/src/chatwidget/tests.rs
+expression: terminal.backend()
+---
+"                                                                                "
+"                                                                                "
+"› Ask Agere to do anything                                                      "
+"                                                                                "
+"  gpt-5.3 high · Roadmap cleanup                                                "

@@ -1,0 +1,15 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-utils-output-truncation"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-protocol = { workspace = true }
+agere-utils-common = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

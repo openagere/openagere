@@ -1,0 +1,71 @@
+[package]
+name = "agere-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "openagere"
+path = "src/main.rs"
+
+[lib]
+name = "agere_cli"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+clap_complete = { workspace = true }
+agere-app-server = { workspace = true }
+agere-app-server-protocol = { workspace = true }
+agere-app-server-test-client = { workspace = true }
+agere-arg0 = { workspace = true }
+agere-utils-cli = { workspace = true }
+agere-config = { workspace = true }
+agere-core = { workspace = true }
+agere-core-plugins = { workspace = true }
+agere-exec = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-execpolicy = { workspace = true }
+agere-features = { workspace = true }
+agere-login = { workspace = true }
+agere-memories-write = { workspace = true }
+agere-mcp = { workspace = true }
+agere-models-manager = { workspace = true }
+agere-protocol = { workspace = true }
+agere-rmcp-client = { workspace = true }
+agere-rollout-trace = { workspace = true }
+agere-state = { workspace = true }
+agere-stdio-to-uds = { workspace = true }
+agere-tui = { workspace = true }
+agere-utils-fs = { workspace = true }
+libc = { workspace = true }
+owo-colors = { workspace = true }
+regex-lite = { workspace = true }
+serde_json = { workspace = true }
+supports-color = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+agere-utils-cargo-bin = { workspace = true }
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+sqlx = { workspace = true }

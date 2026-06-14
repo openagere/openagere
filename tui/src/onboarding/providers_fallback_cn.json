@@ -1,0 +1,581 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com/anthropic",
+      "wire_api": "anthropic",
+      "env_key": "DEEPSEEK_API_KEY",
+      "region": 1,
+      "rank": 1,
+      "models": [
+        {
+          "name": "deepseek-v4-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "deepseek-v4-pro",
+          "context_window": 1000000
+        },
+        {
+          "name": "deepseek-chat",
+          "context_window": 1000000
+        },
+        {
+          "name": "deepseek-reasoner",
+          "context_window": 1000000
+        }
+      ]
+    },
+    {
+      "name": "Alibaba Cloud 阿里云",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "wire_api": "chat",
+      "env_key": "DASHSCOPE_API_KEY",
+      "region": 1,
+      "rank": 2,
+      "models": [
+        {
+          "name": "qwen-long",
+          "context_window": 10000000
+        },
+        {
+          "name": "qwen3-coder-plus",
+          "context_window": 1048576
+        },
+        {
+          "name": "qwen3.5-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen-turbo",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.6-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3-coder-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen-deep-research",
+          "context_window": 1000000
+        }
+      ]
+    },
+    {
+      "name": "Alibaba Coding Plan 阿里云",
+      "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+      "wire_api": "anthropic",
+      "env_key": "ALIBABA_CODING_PLAN_API_KEY",
+      "region": 1,
+      "rank": 3,
+      "models": [
+        {
+          "name": "qwen3.6-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "kimi-k2.5",
+          "context_window": 262144
+        },
+        {
+          "name": "glm-5",
+          "context_window": 262144
+        },
+        {
+          "name": "qwen3.5-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3-coder-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.6-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3-coder-next",
+          "context_window": 262144
+        },
+        {
+          "name": "qwen3-max-2026-01-23",
+          "context_window": 262144
+        }
+      ]
+    },
+    {
+      "name": "Zhipu AI智普",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "wire_api": "chat",
+      "env_key": "ZHIPU_API_KEY",
+      "region": 1,
+      "rank": 4,
+      "models": [
+        {
+          "name": "glm-5",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-5.1",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-4.7",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-4.6",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-5v-turbo",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-4.7-flash",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-4.7-flashx",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-4.5-flash",
+          "context_window": 131072
+        }
+      ]
+    },
+    {
+      "name": "Zhipu AI Coding Plan智普",
+      "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "wire_api": "chat",
+      "env_key": "ZHIPU_API_KEY",
+      "region": 1,
+      "rank": 5,
+      "models": [
+        {
+          "name": "glm-4.7",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-5.1",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-5v-turbo",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-5-turbo",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-4.5-air",
+          "context_window": 131072
+        }
+      ]
+    },
+    {
+      "name": "Moonshot AI (KIMI)",
+      "base_url": "https://api.moonshot.cn/v1",
+      "wire_api": "chat",
+      "env_key": "MOONSHOT_API_KEY",
+      "region": 1,
+      "rank": 6,
+      "models": [
+        {
+          "name": "kimi-k2-turbo-preview",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2.6",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-thinking-turbo",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-thinking",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-0905-preview",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2.5",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-0711-preview",
+          "context_window": 131072
+        }
+      ]
+    },
+    {
+      "name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "wire_api": "responses",
+      "env_key": "OPENROUTER_API_KEY",
+      "region": 1,
+      "rank": 6,
+      "models": [
+        {
+          "name": "openrouter/pareto-code",
+          "context_window": 2000000
+        },
+        {
+          "name": "openrouter/auto",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4.20",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4.20-multi-agent",
+          "context_window": 2000000
+        },
+        {
+          "name": "openai/gpt-5.5-pro",
+          "context_window": 1050000
+        },
+        {
+          "name": "openai/gpt-5.4",
+          "context_window": 1050000
+        },
+        {
+          "name": "openai/gpt-5.5",
+          "context_window": 1050000
+        }
+      ]
+    },
+    {
+      "name": "SiliconFlow (China)",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "wire_api": "chat",
+      "env_key": "SILICONFLOW_CN_API_KEY",
+      "region": 1,
+      "rank": 7,
+      "models": [
+        {
+          "name": "Qwen/Qwen3.5-9B",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3.5-4B",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3.5-122B-A10B",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3.5-397B-A17B",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3.5-27B",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3.5-35B-A3B",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3.6-35B-A3B",
+          "context_window": 262144
+        },
+        {
+          "name": "Pro/moonshotai/Kimi-K2-Thinking",
+          "context_window": 262000
+        }
+      ]
+    },
+    {
+      "name": "MiniMax (minimaxi.com)",
+      "base_url": "https://api.minimaxi.com/anthropic/v1",
+      "wire_api": "anthropic",
+      "env_key": "MINIMAX_API_KEY",
+      "region": 1,
+      "rank": 8,
+      "models": [
+        {
+          "name": "MiniMax-M2.1",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.7",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.5",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.7-highspeed",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.5-highspeed",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2",
+          "context_window": 196608
+        }
+      ]
+    },
+    {
+      "name": "MiniMax Token Plan (minimaxi.com)",
+      "base_url": "https://api.minimaxi.com/anthropic/v1",
+      "wire_api": "anthropic",
+      "env_key": "MINIMAX_API_KEY",
+      "region": 1,
+      "rank": 9,
+      "models": [
+        {
+          "name": "MiniMax-M2.1",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.7",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.5",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.7-highspeed",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2.5-highspeed",
+          "context_window": 204800
+        },
+        {
+          "name": "MiniMax-M2",
+          "context_window": 196608
+        }
+      ]
+    },
+    {
+      "name": "Xiaomi",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "wire_api": "chat",
+      "env_key": "XIAOMI_API_KEY",
+      "region": 1,
+      "rank": 10,
+      "models": [
+        {
+          "name": "mimo-v2.5-pro",
+          "context_window": 1048576
+        },
+        {
+          "name": "mimo-v2-pro",
+          "context_window": 1048576
+        },
+        {
+          "name": "mimo-v2.5",
+          "context_window": 1048576
+        },
+        {
+          "name": "mimo-v2-omni",
+          "context_window": 262144
+        },
+        {
+          "name": "mimo-v2-flash",
+          "context_window": 262144
+        }
+      ]
+    },
+    {
+      "name": "Xiaomi Token Plan (China)",
+      "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+      "wire_api": "chat",
+      "env_key": "XIAOMI_API_KEY",
+      "region": 1,
+      "rank": 11,
+      "models": [
+        {
+          "name": "mimo-v2.5-pro",
+          "context_window": 1048576
+        },
+        {
+          "name": "mimo-v2-pro",
+          "context_window": 1048576
+        },
+        {
+          "name": "mimo-v2.5",
+          "context_window": 1048576
+        },
+        {
+          "name": "mimo-v2-omni",
+          "context_window": 262144
+        },
+        {
+          "name": "mimo-v2-flash",
+          "context_window": 262144
+        },
+        {
+          "name": "mimo-v2-tts",
+          "context_window": 8192
+        }
+      ]
+    },
+    {
+      "name": "Kimi For Coding",
+      "base_url": "https://api.kimi.com/coding/v1",
+      "wire_api": "anthropic",
+      "env_key": "KIMI_API_KEY",
+      "region": 1,
+      "rank": 12,
+      "models": [
+        {
+          "name": "kimi-k2-thinking",
+          "context_window": 262144
+        },
+        {
+          "name": "k2p6",
+          "context_window": 262144
+        },
+        {
+          "name": "k2p5",
+          "context_window": 262144
+        }
+      ]
+    },
+    {
+      "name": "Tencent Coding Plan (China)",
+      "base_url": "https://api.lkeap.cloud.tencent.com/coding/v3",
+      "wire_api": "chat",
+      "env_key": "TENCENT_CODING_PLAN_API_KEY",
+      "region": 1,
+      "rank": 13,
+      "models": [
+        {
+          "name": "kimi-k2.5",
+          "context_window": 262144
+        },
+        {
+          "name": "minimax-m2.5",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-5",
+          "context_window": 202752
+        },
+        {
+          "name": "hunyuan-turbos",
+          "context_window": 131072
+        },
+        {
+          "name": "hunyuan-2.0-thinking",
+          "context_window": 131072
+        },
+        {
+          "name": "hunyuan-2.0-instruct",
+          "context_window": 131072
+        },
+        {
+          "name": "tc-code-latest",
+          "context_window": 131072
+        },
+        {
+          "name": "hunyuan-t1",
+          "context_window": 131072
+        }
+      ]
+    },
+    {
+      "name": "Qiniu",
+      "base_url": "https://api.qnaigc.com/v1",
+      "wire_api": "chat",
+      "env_key": "QINIU_API_KEY",
+      "region": 1,
+      "rank": 14,
+      "models": [
+        {
+          "name": "kling-v2-6",
+          "context_window": 99999999
+        },
+        {
+          "name": "x-ai/grok-4.1-fast-reasoning",
+          "context_window": 20000000
+        },
+        {
+          "name": "x-ai/grok-4.1-fast-non-reasoning",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4-fast",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4.1-fast",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4-fast-non-reasoning",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4-fast-reasoning",
+          "context_window": 2000000
+        },
+        {
+          "name": "gemini-2.5-pro",
+          "context_window": 1048576
+        }
+      ]
+    },
+    {
+      "name": "ModelScope",
+      "base_url": "https://api-inference.modelscope.cn/v1",
+      "wire_api": "chat",
+      "env_key": "MODELSCOPE_API_KEY",
+      "region": 1,
+      "rank": 15,
+      "models": [
+        {
+          "name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3-30B-A3B-Thinking-2507",
+          "context_window": 262144
+        },
+        {
+          "name": "ZhipuAI/GLM-4.6",
+          "context_window": 202752
+        },
+        {
+          "name": "ZhipuAI/GLM-4.5",
+          "context_window": 131072
+        }
+      ]
+    }
+  ]
+}

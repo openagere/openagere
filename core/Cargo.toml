@@ -1,0 +1,160 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-core"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "agere_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agere-write-config-schema"
+path = "src/bin/config_schema.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+arc-swap = { workspace = true }
+async-channel = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bm25 = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+agere-analytics = { workspace = true }
+agere-anthropic-client = { workspace = true }
+agere-openai-chat-client = { workspace = true }
+agere-api = { workspace = true }
+agere-app-server-protocol = { workspace = true }
+agere-apply-patch = { workspace = true }
+agere-async-utils = { workspace = true }
+agere-code-mode = { workspace = true }
+agere-connectors = { workspace = true }
+agere-config = { workspace = true }
+agere-core-plugins = { workspace = true }
+agere-core-skills = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-features = { workspace = true }
+agere-feedback = { workspace = true }
+agere-login = { workspace = true }
+agere-memories-read = { workspace = true }
+agere-mcp = { workspace = true }
+agere-model-provider-info = { workspace = true }
+agere-models-manager = { workspace = true }
+agere-shell-command = { workspace = true }
+agere-execpolicy = { workspace = true }
+agere-git-utils = { workspace = true }
+agere-hooks = { workspace = true }
+agere-network-proxy = { workspace = true }
+agere-otel = { workspace = true }
+agere-plugin = { workspace = true }
+agere-model-provider = { workspace = true }
+agere-protocol = { workspace = true }
+agere-response-debug-context = { workspace = true }
+agere-rollout = { workspace = true }
+agere-rollout-trace = { workspace = true }
+agere-rmcp-client = { workspace = true }
+agere-state = { workspace = true }
+agere-thread-store = { workspace = true }
+agere-tools = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-cache = { workspace = true }
+agere-utils-image = { workspace = true }
+agere-utils-common = { workspace = true }
+agere-utils-output-truncation = { workspace = true }
+agere-utils-plugins-placeholder = { workspace = true }
+
+agere-utils-pty = { workspace = true }
+agere-utils-readiness = { workspace = true }
+csv = { workspace = true }
+dirs = { workspace = true }
+dunce = { workspace = true }
+env-flags = { workspace = true }
+eventsource-stream = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+iana-time-zone = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "webp"] }
+indexmap = { workspace = true }
+libc = { workspace = true }
+notify = { workspace = true }
+once_cell = { workspace = true }
+rand = { workspace = true }
+regex-lite = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
+rmcp = { workspace = true, default-features = false, features = [
+    "base64",
+    "macros",
+    "schemars",
+    "server",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
+shlex = { workspace = true }
+similar = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+tokio-util = { workspace = true, features = ["rt"] }
+tokio-tungstenite = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4", "v5"] }
+which = { workspace = true }
+whoami = { workspace = true }
+
+# Build OpenSSL from source for musl builds.
+[target.x86_64-unknown-linux-musl.dependencies]
+openssl-sys = { workspace = true, features = ["vendored"] }
+
+# Build OpenSSL from source for musl builds.
+[target.aarch64-unknown-linux-musl.dependencies]
+openssl-sys = { workspace = true, features = ["vendored"] }
+
+[target.'cfg(unix)'.dependencies]
+agere-shell-escalation = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+assert_matches = { workspace = true }
+agere-otel = { workspace = true }
+agere-test-binary-support = { workspace = true }
+agere-utils-cargo-bin = { workspace = true }
+
+core_test_support = { workspace = true }
+ctor = { workspace = true }
+insta = { workspace = true }
+maplit = { workspace = true }
+opentelemetry = { workspace = true }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+test-case = "3.3.1"
+opentelemetry_sdk = { workspace = true, features = [
+    "experimental_metrics_custom_reader",
+    "metrics",
+] }
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+test-log = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+walkdir = { workspace = true }
+wiremock = { workspace = true }
+zstd = { workspace = true }
+
+[package.metadata.cargo-shear]
+ignored = ["openssl-sys"]

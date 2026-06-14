@@ -1,0 +1,6 @@
+---
+source: tui/src/history_cell.rs
+expression: rendered
+---
+• Bash(set -o pipefail cargo test -p agere-tui --quiet)
+  └ (no output)

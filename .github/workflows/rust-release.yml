@@ -1,0 +1,324 @@
+﻿name: Rust Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+  # RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ── Linux x64 ──
+  build-linux-x64:
+    name: Linux x64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build openagere
+        run: cargo build --release --jobs 2 --target x86_64-unknown-linux-musl -p agere-cli --bin openagere
+      - name: Download bundled ripgrep
+        run: |
+          mkdir -p resources
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xzf - --wildcards --strip-components=1 -C resources '*/rg'
+          chmod 0755 resources/rg
+      - name: Package npm
+        run: |
+          STAGING=$(mktemp -d)
+          OUTPUT="dist/npm/openagere-npm-linux-x64-${GITHUB_REF_NAME#v}.tgz"
+          python3 scripts/build_npm_package.py \
+            --package openagere-linux-x64 \
+            --release-version "${GITHUB_REF_NAME#v}" \
+            --staging-dir "$STAGING" \
+            --pack-output "$OUTPUT" \
+            --rust-target x86_64-unknown-linux-musl \
+            --agere-bin "target/x86_64-unknown-linux-musl/release/openagere" \
+            --rg-bin resources/rg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-linux-x64
+          path: dist/npm/
+
+  # ── Linux arm64 ──
+  build-linux-arm64:
+    name: Linux arm64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - name: Install cross-compilation tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Increase swap space
+        run: |
+          # Remove existing swapfile if present
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+      - name: Build openagere
+        run: |
+          # Fat LTO causes STATUS_ILLEGAL_INSTRUCTION on ARM64 cross-compilation;
+          # override to thin LTO (see https://github.com/rust-lang/rust/issues/109716)
+          export CARGO_PROFILE_RELEASE_LTO=thin
+          cross build --release --jobs 2 --target aarch64-unknown-linux-musl -p agere-cli --bin openagere
+      - name: Download bundled ripgrep
+        run: |
+          mkdir -p resources
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz \
+            | tar -xzf - --wildcards --strip-components=1 -C resources '*/rg'
+          chmod 0755 resources/rg
+      - name: Package npm
+        run: |
+          STAGING=$(mktemp -d)
+          OUTPUT="dist/npm/openagere-npm-linux-arm64-${GITHUB_REF_NAME#v}.tgz"
+          python3 scripts/build_npm_package.py \
+            --package openagere-linux-arm64 \
+            --release-version "${GITHUB_REF_NAME#v}" \
+            --staging-dir "$STAGING" \
+            --pack-output "$OUTPUT" \
+            --rust-target aarch64-unknown-linux-musl \
+            --agere-bin "target/aarch64-unknown-linux-musl/release/openagere" \
+            --rg-bin resources/rg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-linux-arm64
+          path: dist/npm/
+
+  # ── macOS x64 ──
+  build-darwin-x64:
+    name: macOS x64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - name: Build openagere
+        run: cargo build --release --target x86_64-apple-darwin -p agere-cli --bin openagere
+      - name: Download bundled ripgrep
+        run: |
+          mkdir -p resources
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-apple-darwin.tar.gz \
+            | tar -xzf - --strip-components=1 -C resources '*/rg'
+          chmod 0755 resources/rg
+      - name: Package npm
+        run: |
+          STAGING=$(mktemp -d)
+          OUTPUT="dist/npm/openagere-npm-darwin-x64-${GITHUB_REF_NAME#v}.tgz"
+          python3 scripts/build_npm_package.py \
+            --package openagere-darwin-x64 \
+            --release-version "${GITHUB_REF_NAME#v}" \
+            --staging-dir "$STAGING" \
+            --pack-output "$OUTPUT" \
+            --rust-target x86_64-apple-darwin \
+            --agere-bin "target/x86_64-apple-darwin/release/openagere" \
+            --rg-bin resources/rg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-darwin-x64
+          path: dist/npm/
+
+  # ── macOS arm64 ──
+  build-darwin-arm64:
+    name: macOS arm64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Build openagere
+        run: cargo build --release --target aarch64-apple-darwin -p agere-cli --bin openagere
+      - name: Download bundled ripgrep
+        run: |
+          mkdir -p resources
+          curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-apple-darwin.tar.gz \
+            | tar -xzf - --strip-components=1 -C resources '*/rg'
+          chmod 0755 resources/rg
+      - name: Package npm
+        run: |
+          STAGING=$(mktemp -d)
+          OUTPUT="dist/npm/openagere-npm-darwin-arm64-${GITHUB_REF_NAME#v}.tgz"
+          python3 scripts/build_npm_package.py \
+            --package openagere-darwin-arm64 \
+            --release-version "${GITHUB_REF_NAME#v}" \
+            --staging-dir "$STAGING" \
+            --pack-output "$OUTPUT" \
+            --rust-target aarch64-apple-darwin \
+            --agere-bin "target/aarch64-apple-darwin/release/openagere" \
+            --rg-bin resources/rg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-darwin-arm64
+          path: dist/npm/
+
+  # ── Windows x64 ──
+  build-win32-x64:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build openagere
+        run: cargo build --release --target x86_64-pc-windows-msvc -p agere-cli --bin openagere
+      - name: Download bundled ripgrep
+        run: |
+          $rgDir = "resources"
+          New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
+          $rgUrl = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+          $rgZip = Join-Path $env:TEMP "rg.zip"
+          Invoke-WebRequest -Uri $rgUrl -OutFile $rgZip
+          Expand-Archive -Path $rgZip -DestinationPath "$rgDir\extract" -Force
+          Get-ChildItem -Path "$rgDir\extract" -Recurse -Filter "rg.exe" | Select-Object -First 1 | Copy-Item -Destination "$rgDir/rg.exe"
+      - name: Package npm
+        run: |
+          $STAGING = Join-Path $env:TEMP (New-Guid).ToString()
+          New-Item -ItemType Directory -Force -Path $STAGING | Out-Null
+          $OUTPUT = "dist/npm/openagere-npm-win32-x64-$($env:GITHUB_REF_NAME -replace 'v','').tgz"
+          python scripts/build_npm_package.py `
+            --package openagere-win32-x64 `
+            --release-version "${{ github.ref_name }}".Replace("v","") `
+            --staging-dir $STAGING `
+            --pack-output $OUTPUT `
+            --rust-target x86_64-pc-windows-msvc `
+            --agere-bin "target/x86_64-pc-windows-msvc/release/openagere.exe" `
+            --rg-bin resources/rg.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-win32-x64
+          path: dist/npm/
+
+  # ── Windows arm64 ──
+  build-win32-arm64:
+    name: Windows arm64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - name: Build openagere
+        run: |
+          # Fat LTO causes STATUS_ILLEGAL_INSTRUCTION on ARM64 cross-compilation;
+          # override to thin LTO (see https://github.com/rust-lang/rust/issues/109716)
+          $env:CARGO_PROFILE_RELEASE_LTO = "thin"
+          cargo build --release --target aarch64-pc-windows-msvc -p agere-cli --bin openagere
+      - name: Download bundled ripgrep
+        run: |
+          $rgDir = "resources"
+          New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
+          $rgUrl = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+          $rgZip = Join-Path $env:TEMP "rg.zip"
+          Invoke-WebRequest -Uri $rgUrl -OutFile $rgZip
+          Expand-Archive -Path $rgZip -DestinationPath "$rgDir\extract" -Force
+          Get-ChildItem -Path "$rgDir\extract" -Recurse -Filter "rg.exe" | Select-Object -First 1 | Copy-Item -Destination "$rgDir/rg.exe"
+      - name: Package npm
+        run: |
+          $STAGING = Join-Path $env:TEMP (New-Guid).ToString()
+          New-Item -ItemType Directory -Force -Path $STAGING | Out-Null
+          $OUTPUT = "dist/npm/openagere-npm-win32-arm64-$($env:GITHUB_REF_NAME -replace 'v','').tgz"
+          python scripts/build_npm_package.py `
+            --package openagere-win32-arm64 `
+            --release-version "${{ github.ref_name }}".Replace("v","") `
+            --staging-dir $STAGING `
+            --pack-output $OUTPUT `
+            --rust-target aarch64-pc-windows-msvc `
+            --agere-bin "target/aarch64-pc-windows-msvc/release/openagere.exe" `
+            --rg-bin resources/rg.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-win32-arm64
+          path: dist/npm/
+
+  # ── Publish ──
+  publish:
+    name: Publish npm packages
+    needs:
+      - build-linux-x64
+      - build-linux-arm64
+      - build-darwin-x64
+      - build-darwin-arm64
+      - build-win32-x64
+      - build-win32-arm64
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: npm-*
+          path: dist/npm/
+          merge-multiple: true
+      - name: Build main package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING=$(mktemp -d)
+          OUTPUT="dist/npm/openagere-npm-main-${VERSION}.tgz"
+          python3 scripts/build_npm_package.py \
+            --package openagere \
+            --release-version "$VERSION" \
+            --staging-dir "$STAGING" \
+            --pack-output "$OUTPUT"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Try to create release; if it already exists, upload assets instead
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/npm/*.tgz --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Openagere v$VERSION" \
+              --generate-notes \
+              dist/npm/*.tgz
+          fi
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > .npmrc
+                    VERSION="${GITHUB_REF_NAME#v}"
+          # Publish platform packages first with platform tags
+          for platform in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64; do
+            tarball="dist/npm/openagere-npm-${platform}-${VERSION}.tgz"
+            if [ -f "$tarball" ]; then
+              echo "Publishing $tarball --tag ${platform}"
+              # Retry up to 3 times with backoff (npm spam-detection can be transient)
+              for attempt in 1 2 3; do
+                if npm publish "$tarball" --tag "${platform}" --access public 2>&1; then
+                  break
+                else
+                  if [ "$attempt" -lt 3 ]; then
+                    wait=$((attempt * 30))
+                    echo "Publish attempt ${attempt} failed, retrying in ${wait}s..."
+                    sleep "${wait}"
+                  else
+                    echo "Publish failed after 3 attempts"
+                    exit 1
+                  fi
+                fi
+              done
+              # Delay between packages to avoid spam detection
+              sleep 15
+            fi
+          done
+          # Publish main package last with latest tag
+          npm publish "dist/npm/openagere-npm-main-${VERSION}.tgz" --tag latest --access public

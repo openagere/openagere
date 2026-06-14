@@ -1,0 +1,17 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-utils-common"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+regex-lite = { workspace = true }
+rustls = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
