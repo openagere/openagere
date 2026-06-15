@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests.rs
+expression: snapshot
+---
+History:
+• Bash(echo repro-marker)
+  └ repro-marker
+
+Active:
+• Exploring
+  └ Read null

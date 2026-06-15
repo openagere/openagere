@@ -1,0 +1,30 @@
+{
+  "name": "openagere",
+  "version": "{{VERSION}}",
+  "description": "Openagere CLI - AI coding assistant",
+  "type": "module",
+  "bin": {
+    "openagere": "bin/openagere.js"
+  },
+  "preferUnplugged": true,
+  "optionalDependencies": {
+    "@openagere/openagere-linux-x64": "npm:openagere@{{VERSION}}-linux-x64",
+    "@openagere/openagere-linux-arm64": "npm:openagere@{{VERSION}}-linux-arm64",
+    "@openagere/openagere-darwin-x64": "npm:openagere@{{VERSION}}-darwin-x64",
+    "@openagere/openagere-darwin-arm64": "npm:openagere@{{VERSION}}-darwin-arm64",
+    "@openagere/openagere-win32-x64": "npm:openagere@{{VERSION}}-win32-x64",
+    "@openagere/openagere-win32-arm64": "npm:openagere@{{VERSION}}-win32-arm64"
+  },
+  "files": [
+    "bin/openagere.js",
+    "bin/postinstall.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "scripts": {
+    "postinstall": "node bin/postinstall.js"
+  }
+}

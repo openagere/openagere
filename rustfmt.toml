@@ -1,0 +1,3 @@
+edition = "2024"
+# The warnings caused by this setting can be ignored.
+imports_granularity = "Item"

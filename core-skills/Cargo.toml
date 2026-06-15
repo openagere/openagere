@@ -1,0 +1,43 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-core-skills"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "agere_core_skills"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+agere-analytics = { workspace = true }
+agere-app-server-protocol = { workspace = true }
+agere-config = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-login = { workspace = true }
+agere-model-provider = { workspace = true }
+agere-otel = { workspace = true }
+agere-protocol = { workspace = true }
+agere-skills = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-common = { workspace = true }
+agere-utils-plugins-placeholder = { workspace = true }
+
+dirs = { workspace = true }
+dunce = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+shlex = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

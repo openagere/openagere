@@ -1,0 +1,15 @@
+---
+source: tui/src/model_migration.rs
+assertion_line: 535
+expression: terminal.backend()
+---
+
+> Agere just got an upgrade. Introducing gpt-5.4-mini.
+
+  We recommend switching from gpt-5.4 to gpt-5.4-mini.
+
+  Smaller model for faster, lower-cost everyday coding
+  tasks. Learn more about gpt-5.4-mini at
+  https://openai.com/index/introducing-gpt-5-4
+
+  Press enter to continue

@@ -1,0 +1,25 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-memories-read"
+version.workspace = true
+
+[lib]
+name = "agere_memories_read"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-protocol = { workspace = true }
+agere-shell-command = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-common = { workspace = true }
+agere-utils-output-truncation = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros"] }

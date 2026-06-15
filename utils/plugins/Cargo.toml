@@ -1,0 +1,25 @@
+
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-utils-plugins-placeholder"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "agere_utils_plugins_placeholder"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-exec-server = { workspace = true }
+agere-login = { workspace = true }
+agere-utils-fs = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,0 +1,153 @@
+[package]
+name = "agere-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobins = false
+
+[[bin]]
+name = "agere-tui"
+path = "src/main.rs"
+
+[[bin]]
+name = "md-events"
+path = "src/bin/md-events.rs"
+
+[lib]
+name = "agere_tui"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+aes-gcm = "0.10"
+base64 = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+agere-ansi-escape = { workspace = true }
+agere-app-server-client = { workspace = true }
+agere-app-server-protocol = { workspace = true }
+agere-arg0 = { workspace = true }
+agere-install-context = { workspace = true }
+agere-config = { workspace = true }
+agere-connectors = { workspace = true }
+agere-core-plugins = { workspace = true }
+agere-core-skills = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-features = { workspace = true }
+agere-feedback = { workspace = true }
+agere-file-search = { workspace = true }
+agere-git-utils = { workspace = true }
+agere-login = { workspace = true }
+agere-model-provider = { workspace = true }
+agere-model-provider-info = { workspace = true }
+agere-models-manager = { workspace = true }
+agere-otel = { workspace = true }
+agere-plugin = { workspace = true }
+agere-protocol = { workspace = true }
+agere-rollout = { workspace = true }
+agere-shell-command = { workspace = true }
+agere-state = { workspace = true }
+agere-utils-approval-presets = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-cli = { workspace = true }
+agere-utils-common = { workspace = true }
+agere-utils-plugins-placeholder = { workspace = true }
+
+agere-utils-sleep-inhibitor = { workspace = true }
+color-eyre = { workspace = true }
+crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
+derive_more = { workspace = true, features = ["is_variant"] }
+diffy = { workspace = true }
+dirs = { workspace = true }
+dunce = { workspace = true }
+gethostname = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "gif", "webp"] }
+itertools = { workspace = true }
+lazy_static = { workspace = true }
+pathdiff = { workspace = true }
+pulldown-cmark = { workspace = true }
+rand = { workspace = true }
+ratatui = { workspace = true, features = [
+    "scrolling-regions",
+    "unstable-backend-writer",
+    "unstable-rendered-line-info",
+    "unstable-widget-ref",
+] }
+ratatui-macros = { workspace = true }
+regex-lite = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+rmcp = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
+shlex = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+supports-color = { workspace = true }
+sys-locale = { workspace = true }
+tempfile = { workspace = true }
+textwrap = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+    "test-util",
+    "time",
+] }
+tokio-stream = { workspace = true, features = ["sync"] }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+syntect = "5"
+two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
+unicode-segmentation = { workspace = true }
+unicode-width = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+webbrowser = { workspace = true }
+which = { workspace = true }
+uuid = { workspace = true }
+
+tokio-util = { workspace = true, features = ["time"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+cpal = "0.15"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
+winsplit = "0.1"
+
+# Clipboard support via `arboard` is not available on Android/Termux.
+# Only include it for non-Android targets so the crate builds on Android.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = { workspace = true }
+
+[dev-dependencies]
+agere-utils-cargo-bin = { workspace = true }
+agere-cli = { workspace = true }
+agere-mcp = { workspace = true }
+
+agere-utils-pty = { workspace = true }
+assert_matches = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+insta = { workspace = true }
+pretty_assertions = { workspace = true }
+rand = { workspace = true }
+serial_test = { workspace = true }
+vt100 = { workspace = true }
+uuid = { workspace = true }
+wiremock = { workspace = true }

@@ -1,0 +1,28 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "agere-tools"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+agere-app-server-protocol = { workspace = true }
+agere-code-mode = { workspace = true }
+agere-features = { workspace = true }
+agere-protocol = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-pty = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = [
+    "base64",
+    "macros",
+    "schemars",
+    "server",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,46 @@
+---
+source: tui/src/bottom_pane/provider_wizard.rs
+assertion_line: 1912
+expression: "render_snapshot(&view, 78)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 78, height: 11 },
+    content: [
+        "                                                                              ",
+        "  Choose a provider                                                           ",
+        "  active: kk-openai                                                           ",
+        "  search: type to search providers                                            ",
+        "                                                                              ",
+        "    1. Add custom provider  create a provider from scratch                    ",
+        "  › 2. kk-openai            current session default                           ",
+        "    3. deepseek             template — add API key to enable                  ",
+        "                                                                              ",
+        "                                                                              ",
+        "type search · up/down navigate · enter switch · space edit · ctrl+d/del delete",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: DarkGray, underline: Reset, modifier: BOLD,
+        x: 19, y: 1, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 2, y: 2, fg: Reset, bg: DarkGray, underline: Reset, modifier: DIM,
+        x: 19, y: 2, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 2, y: 3, fg: Reset, bg: DarkGray, underline: Reset, modifier: DIM,
+        x: 34, y: 3, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 26, y: 5, fg: Reset, bg: DarkGray, underline: Reset, modifier: DIM,
+        x: 58, y: 5, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 2, y: 6, fg: Cyan, bg: DarkGray, underline: Reset, modifier: BOLD,
+        x: 51, y: 6, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 26, y: 7, fg: Reset, bg: DarkGray, underline: Reset, modifier: DIM,
+        x: 60, y: 7, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 0, y: 10, fg: Cyan, bg: Reset, underline: Reset, modifier: DIM,
+        x: 4, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 14, y: 10, fg: Cyan, bg: Reset, underline: Reset, modifier: DIM,
+        x: 21, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 33, y: 10, fg: Cyan, bg: Reset, underline: Reset, modifier: DIM,
+        x: 38, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 48, y: 10, fg: Cyan, bg: Reset, underline: Reset, modifier: DIM,
+        x: 53, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 61, y: 10, fg: Cyan, bg: Reset, underline: Reset, modifier: DIM,
+        x: 71, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+    ]
+}

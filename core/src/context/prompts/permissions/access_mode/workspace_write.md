@@ -1,0 +1,1 @@
+Filesystem access defines which files can be read or written. `access_mode` is `workspace-write`: Reading files is allowed, and editing files in `cwd` and `writable_roots` is permitted. Editing files in other directories requires approval. Network access is {{network_access}}.

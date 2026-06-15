@@ -1,0 +1,21 @@
+---
+source: tui/src/status/tests.rs
+expression: sanitized
+---
+/status
+
+╭─────────────────────────────────────────────────────────────────────────────╮
+│  >_ Open Agere (v0.0.1)                                                   │
+│                                                                             │
+│ Visit https://chatgpt.com/agere/settings/usage for up-to-date               │
+│ information on rate limits and credits                                      │
+│                                                                             │
+│  Model:            gpt-5.4 (reasoning none, summaries auto)                 │
+│  Directory: [[workspace]]                                                   │
+│  Permissions:      Custom (workspace-write with network access, on-request) │
+│  Agents.md:        <none>                                                   │
+│                                                                             │
+│  Token usage:      750 total  (500 input + 250 output)                      │
+│  Context window:   100% left (750 used / 272K)                              │
+│  Limits:           data not available yet                                   │
+╰─────────────────────────────────────────────────────────────────────────────╯

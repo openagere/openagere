@@ -1,0 +1,531 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "wire_api": "responses",
+      "env_key": "OPENAI_API_KEY",
+      "region": 2,
+      "rank": 1,
+      "models": [
+        {
+          "name": "gpt-5.5-pro",
+          "context_window": 1050000
+        },
+        {
+          "name": "gpt-5.4",
+          "context_window": 1050000
+        },
+        {
+          "name": "gpt-5.5",
+          "context_window": 1050000
+        },
+        {
+          "name": "gpt-5.4-pro",
+          "context_window": 1050000
+        },
+        {
+          "name": "gpt-4.1",
+          "context_window": 1047576
+        },
+        {
+          "name": "gpt-4.1-mini",
+          "context_window": 1047576
+        },
+        {
+          "name": "gpt-4.1-nano",
+          "context_window": 1047576
+        },
+        {
+          "name": "gpt-5.2",
+          "context_window": 400000
+        }
+      ]
+    },
+    {
+      "name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "wire_api": "anthropic",
+      "env_key": "ANTHROPIC_API_KEY",
+      "region": 2,
+      "rank": 2,
+      "models": [
+        {
+          "name": "claude-sonnet-4-6",
+          "context_window": 1000000
+        },
+        {
+          "name": "claude-opus-4-7",
+          "context_window": 1000000
+        },
+        {
+          "name": "claude-opus-4-6",
+          "context_window": 1000000
+        },
+        {
+          "name": "claude-opus-4-1-20250805",
+          "context_window": 200000
+        },
+        {
+          "name": "claude-haiku-4-5",
+          "context_window": 200000
+        },
+        {
+          "name": "claude-3-haiku-20240307",
+          "context_window": 200000
+        },
+        {
+          "name": "claude-3-sonnet-20240229",
+          "context_window": 200000
+        },
+        {
+          "name": "claude-3-5-haiku-latest",
+          "context_window": 200000
+        }
+      ]
+    },
+    {
+      "name": "xAI",
+      "base_url": "https://api.x.ai/v1",
+      "wire_api": "responses",
+      "env_key": "XAI_API_KEY",
+      "region": 2,
+      "rank": 4,
+      "models": [
+        {
+          "name": "grok-4.20-0309-non-reasoning",
+          "context_window": 2000000
+        },
+        {
+          "name": "grok-4.20-0309-reasoning",
+          "context_window": 2000000
+        },
+        {
+          "name": "grok-4.20-multi-agent-0309",
+          "context_window": 2000000
+        },
+        {
+          "name": "grok-4.3",
+          "context_window": 1000000
+        },
+        {
+          "name": "grok-build-0.1",
+          "context_window": 256000
+        },
+        {
+          "name": "grok-imagine-image-quality",
+          "context_window": 8000
+        },
+        {
+          "name": "grok-imagine-image",
+          "context_window": 8000
+        },
+        {
+          "name": "grok-imagine-video",
+          "context_window": 1024
+        }
+      ]
+    },
+    {
+      "name": "Alibaba Cloud",
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "wire_api": "chat",
+      "env_key": "DASHSCOPE_API_KEY",
+      "region": 2,
+      "rank": 5,
+      "models": [
+        {
+          "name": "qwen3-coder-plus",
+          "context_window": 1048576
+        },
+        {
+          "name": "qwen3.5-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.7-max",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen-turbo",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.6-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3-coder-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.6-flash",
+          "context_window": 1000000
+        }
+      ]
+    },
+    {
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com/anthropic",
+      "wire_api": "anthropic",
+      "env_key": "DEEPSEEK_API_KEY",
+      "region": 2,
+      "rank": 5,
+      "models": [
+        {
+          "name": "deepseek-v4-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "deepseek-v4-pro",
+          "context_window": 1000000
+        },
+        {
+          "name": "deepseek-chat",
+          "context_window": 1000000
+        },
+        {
+          "name": "deepseek-reasoner",
+          "context_window": 1000000
+        }
+      ]
+    },
+    {
+      "name": "Alibaba Coding Plan",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "wire_api": "chat",
+      "env_key": "ALIBABA_CODING_PLAN_API_KEY",
+      "region": 2,
+      "rank": 6,
+      "models": [
+        {
+          "name": "qwen3.5-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.6-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3-coder-plus",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.7-max",
+          "context_window": 1000000
+        },
+        {
+          "name": "qwen3.6-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "kimi-k2.5",
+          "context_window": 262144
+        },
+        {
+          "name": "qwen3-coder-next",
+          "context_window": 262144
+        },
+        {
+          "name": "qwen3-max-2026-01-23",
+          "context_window": 262144
+        }
+      ]
+    },
+    {
+      "name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "wire_api": "responses",
+      "env_key": "OPENROUTER_API_KEY",
+      "region": 2,
+      "rank": 6,
+      "models": [
+        {
+          "name": "openrouter/pareto-code",
+          "context_window": 2000000
+        },
+        {
+          "name": "openrouter/auto",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4.20",
+          "context_window": 2000000
+        },
+        {
+          "name": "x-ai/grok-4.20-multi-agent",
+          "context_window": 2000000
+        },
+        {
+          "name": "~openai/gpt-latest",
+          "context_window": 1050000
+        },
+        {
+          "name": "openai/gpt-5.5-pro",
+          "context_window": 1050000
+        },
+        {
+          "name": "openai/gpt-5.4",
+          "context_window": 1050000
+        },
+        {
+          "name": "openai/gpt-5.5",
+          "context_window": 1050000
+        }
+      ]
+    },
+    {
+      "name": "Hugging Face",
+      "base_url": "https://router.huggingface.co/v1",
+      "wire_api": "chat",
+      "env_key": "HF_TOKEN",
+      "region": 2,
+      "rank": 7,
+      "models": [
+        {
+          "name": "deepseek-ai/DeepSeek-V4-Pro",
+          "context_window": 1048576
+        },
+        {
+          "name": "moonshotai/Kimi-K2-Thinking",
+          "context_window": 262144
+        },
+        {
+          "name": "moonshotai/Kimi-K2.6",
+          "context_window": 262144
+        },
+        {
+          "name": "moonshotai/Kimi-K2.5",
+          "context_window": 262144
+        },
+        {
+          "name": "moonshotai/Kimi-K2-Instruct-0905",
+          "context_window": 262144
+        },
+        {
+          "name": "XiaomiMiMo/MiMo-V2-Flash",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+          "context_window": 262144
+        },
+        {
+          "name": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+          "context_window": 262144
+        }
+      ]
+    },
+    {
+      "name": "Nvidia",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "wire_api": "chat",
+      "env_key": "NVIDIA_API_KEY",
+      "region": 2,
+      "rank": 12,
+      "models": [
+        {
+          "name": "deepseek-ai/deepseek-v4-pro",
+          "context_window": 1048576
+        },
+        {
+          "name": "deepseek-ai/deepseek-v4-flash",
+          "context_window": 1048576
+        },
+        {
+          "name": "moonshotai/kimi-k2-instruct-0905",
+          "context_window": 262144
+        },
+        {
+          "name": "moonshotai/kimi-k2-thinking",
+          "context_window": 262144
+        },
+        {
+          "name": "moonshotai/kimi-k2.6",
+          "context_window": 262144
+        },
+        {
+          "name": "nvidia/nemotron-3-super-120b-a12b",
+          "context_window": 262144
+        },
+        {
+          "name": "mistralai/mistral-large-3-675b-instruct-2512",
+          "context_window": 262144
+        },
+        {
+          "name": "mistralai/devstral-2-123b-instruct-2512",
+          "context_window": 262144
+        }
+      ]
+    },
+    {
+      "name": "Z.AI",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "wire_api": "chat",
+      "env_key": "ZHIPU_API_KEY",
+      "region": 2,
+      "rank": 14,
+      "models": [
+        {
+          "name": "glm-4.6",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-4.7",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-5",
+          "context_window": 204800
+        },
+        {
+          "name": "glm-5.1",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-5v-turbo",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-4.7-flashx",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-4.7-flash",
+          "context_window": 200000
+        },
+        {
+          "name": "glm-5-turbo",
+          "context_window": 200000
+        }
+      ]
+    },
+    {
+      "name": "Fireworks AI",
+      "base_url": "https://api.fireworks.ai/inference/v1/",
+      "wire_api": "chat",
+      "env_key": "FIREWORKS_API_KEY",
+      "region": 2,
+      "rank": 15,
+      "models": [
+        {
+          "name": "accounts/fireworks/models/deepseek-v4-pro",
+          "context_window": 1000000
+        },
+        {
+          "name": "accounts/fireworks/models/deepseek-v4-flash",
+          "context_window": 1000000
+        },
+        {
+          "name": "accounts/fireworks/models/kimi-k2p6",
+          "context_window": 262000
+        },
+        {
+          "name": "accounts/fireworks/routers/kimi-k2p6-turbo",
+          "context_window": 262000
+        },
+        {
+          "name": "accounts/fireworks/models/kimi-k2p5",
+          "context_window": 256000
+        },
+        {
+          "name": "accounts/fireworks/models/glm-5p1",
+          "context_window": 202800
+        },
+        {
+          "name": "accounts/fireworks/routers/glm-5p1-fast",
+          "context_window": 202800
+        },
+        {
+          "name": "accounts/fireworks/models/minimax-m2p7",
+          "context_window": 196608
+        }
+      ]
+    },
+    {
+      "name": "Moonshot AI",
+      "base_url": "https://api.moonshot.ai/v1",
+      "wire_api": "chat",
+      "env_key": "MOONSHOT_API_KEY",
+      "region": 2,
+      "rank": 15,
+      "models": [
+        {
+          "name": "kimi-k2.5",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-0905-preview",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-thinking",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-thinking-turbo",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2.6",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-turbo-preview",
+          "context_window": 262144
+        },
+        {
+          "name": "kimi-k2-0711-preview",
+          "context_window": 131072
+        }
+      ]
+    },
+    {
+      "name": "GitHub Copilot",
+      "base_url": "https://api.githubcopilot.com",
+      "wire_api": "chat",
+      "env_key": "GITHUB_TOKEN",
+      "region": 2,
+      "rank": 16,
+      "models": [
+        {
+          "name": "gpt-5.1-codex-mini",
+          "context_window": 400000
+        },
+        {
+          "name": "gpt-5.4",
+          "context_window": 400000
+        },
+        {
+          "name": "gpt-5.4-mini",
+          "context_window": 400000
+        },
+        {
+          "name": "gpt-5.1-codex-max",
+          "context_window": 400000
+        },
+        {
+          "name": "gpt-5.5",
+          "context_window": 400000
+        },
+        {
+          "name": "gpt-5.1-codex",
+          "context_window": 400000
+        },
+        {
+          "name": "gpt-5.2-codex",
+          "context_window": 400000
+        },
+        {
+          "name": "gpt-5.3-codex",
+          "context_window": 400000
+        }
+      ]
+    }
+  ]
+}

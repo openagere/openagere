@@ -1,0 +1,13 @@
+---
+source: tui/src/bottom_pane/list_selection_view.rs
+expression: "render_lines_with_width(&view, 80)"
+---
+                                                                                
+  Select Model and Effort                                                       
+                                                                                
+› 1. gpt-5.4 (current)        Frontier model for complex coding, research, and   
+                              real-world work.                                  
+  2. gpt-5.4-mini             Smaller model for faster, lower-cost everyday     
+                              coding tasks.                                     
+  3. deepseek-v4-pro           Alternative provider model for coding and         
+                              agentic workflows.

@@ -1,0 +1,2 @@
+pub use agere_utils_plugins_placeholder::mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
+pub use agere_utils_plugins_placeholder::mention_syntax::TOOL_MENTION_SIGIL;

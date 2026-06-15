@@ -1,0 +1,1 @@
+Approvals are your mechanism to get user consent to run shell commands with escalated access when needed. `approval_policy` is `unless-trusted`: The harness will escalate most commands for user approval, apart from a limited allowlist of safe "read" commands.

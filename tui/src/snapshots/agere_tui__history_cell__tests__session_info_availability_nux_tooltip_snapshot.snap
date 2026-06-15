@@ -1,0 +1,12 @@
+---
+source: tui/src/history_cell.rs
+expression: rendered
+---
+╭─────────────────────────────────────╮
+│ >_ Open Agere (v0.0.1)            │
+│                                     │
+│ model:     gpt-5   /model to change │
+│ directory: /tmp/project             │
+╰─────────────────────────────────────╯
+
+  Tip: Model just became available

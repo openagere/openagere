@@ -1,0 +1,33 @@
+{
+  "name": "openagere",
+  "version": "0.0.1",
+  "description": "OpenAgere - Multi-agent framework. This is a demo placeholder package.",
+  "main": "bin/cli.js",
+  "bin": {
+    "openagere": "./bin/cli.js"
+  },
+  "scripts": {
+    "start": "node bin/cli.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openagere/openagere"
+  },
+  "keywords": [
+    "openagere",
+    "agent",
+    "multi-agent",
+    "ai",
+    "framework"
+  ],
+  "author": "openagere",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/openagere/openagere/issues"
+  },
+  "homepage": "https://github.com/openagere/openagere#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

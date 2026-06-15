@@ -1,0 +1,120 @@
+[package]
+name = "agere-app-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agere-app-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "agere-app-server-test-notify-capture"
+path = "src/bin/notify_capture.rs"
+
+[lib]
+name = "agere_app_server"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+axum = { workspace = true, default-features = false, features = [
+    "http1",
+    "json",
+    "tokio",
+    "ws",
+] }
+agere-analytics = { workspace = true }
+agere-api = { workspace = true }
+agere-arg0 = { workspace = true }
+agere-config = { workspace = true }
+agere-core = { workspace = true }
+agere-core-plugins = { workspace = true }
+agere-device-key = { workspace = true }
+agere-exec-server = { workspace = true }
+agere-features = { workspace = true }
+agere-git-utils = { workspace = true }
+agere-otel = { workspace = true }
+agere-shell-command = { workspace = true }
+agere-utils-cli = { workspace = true }
+agere-utils-pty = { workspace = true }
+agere-file-search = { workspace = true }
+agere-login = { workspace = true }
+agere-memories-write = { workspace = true }
+agere-mcp = { workspace = true }
+agere-model-provider = { workspace = true }
+agere-models-manager = { workspace = true }
+agere-protocol = { workspace = true }
+agere-app-server-protocol = { workspace = true }
+agere-feedback = { workspace = true }
+agere-rmcp-client = { workspace = true }
+agere-rollout = { workspace = true }
+agere-state = { workspace = true }
+agere-thread-store = { workspace = true }
+agere-tools = { workspace = true }
+agere-uds = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-utils-common = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+constant_time_eq = { workspace = true }
+futures = { workspace = true }
+gethostname = { workspace = true }
+hmac = { workspace = true }
+jsonwebtoken = { workspace = true }
+owo-colors = { workspace = true, features = ["supports-colors"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+tokio-util = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+url = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v7"] }
+
+[dev-dependencies]
+agere-utils-cargo-bin = { workspace = true }
+app_test_support = { workspace = true }
+base64 = { workspace = true }
+axum = { workspace = true, default-features = false, features = [
+    "http1",
+    "json",
+    "tokio",
+] }
+core_test_support = { workspace = true }
+agere-model-provider-info = { workspace = true }
+
+flate2 = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+pretty_assertions = { workspace = true }
+reqwest = { workspace = true, features = ["rustls-tls"] }
+rmcp = { workspace = true, default-features = false, features = [
+    "elicitation",
+    "server",
+    "transport-streamable-http-server",
+] }
+serial_test = { workspace = true }
+tar = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+wiremock = { workspace = true }
+shlex = { workspace = true }
