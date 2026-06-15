@@ -249,6 +249,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_threads_state_db_only_preserves_goal_preview_without_first_user_message() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let store = LocalThreadStore::new(config.clone());
+        let uuid = Uuid::from_u128(104);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let rollout_path = home.path().join("rollout-goal-preview.jsonl");
+        fs::write(&rollout_path, "").expect("placeholder rollout file");
+
+        let runtime = agere_state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        runtime
+            .mark_backfill_complete(/*last_watermark*/ None)
+            .await
+            .expect("backfill should be complete");
+        let created_at = Utc::now();
+        let mut builder = agere_state::ThreadMetadataBuilder::new(
+            thread_id,
+            rollout_path,
+            created_at,
+            SessionSource::Cli,
+        );
+        builder.model_provider = Some(config.model_provider_id.clone());
+        builder.cwd = home.path().to_path_buf();
+        builder.cli_version = Some("test_version".to_string());
+        let mut metadata = builder.build(config.model_provider_id.as_str());
+        metadata.preview = Some("goal preview".to_string());
+        metadata.first_user_message = None;
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("state db upsert should succeed");
+
+        let page = store
+            .list_threads(ListThreadsParams {
+                page_size: 10,
+                cursor: None,
+                sort_key: ThreadSortKey::CreatedAt,
+                sort_direction: SortDirection::Desc,
+                allowed_sources: Vec::new(),
+                model_providers: None,
+                cwd_filters: None,
+                archived: false,
+                search_term: None,
+                use_state_db_only: true,
+            })
+            .await
+            .expect("thread listing");
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].thread_id, thread_id);
+        assert_eq!(page.items[0].preview, "goal preview");
+        assert_eq!(page.items[0].first_user_message, None);
+    }
+
+    #[tokio::test]
     async fn list_threads_selects_active_or_archived_collection() {
         let home = TempDir::new().expect("temp dir");
         let store = LocalThreadStore::new(test_config(home.path()));

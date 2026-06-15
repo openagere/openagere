@@ -2076,13 +2076,11 @@ fn goal_status_indicator_line_formats_goal_text() {
             },
             "Goal unmet (4K / 5K tokens)",
         ),
+        (GoalStatusIndicator::Paused, "Goal paused (/goal resume)"),
+        (GoalStatusIndicator::Blocked, "Goal blocked (/goal resume)"),
         (
-            GoalStatusIndicator::Paused,
-            "Goal paused (/goal to unpause)",
-        ),
-        (
-            GoalStatusIndicator::Blocked,
-            "Goal blocked (/goal to unpause)",
+            GoalStatusIndicator::UsageLimited,
+            "Goal hit usage limits (/goal resume)",
         ),
         (
             GoalStatusIndicator::BudgetLimited { usage: None },

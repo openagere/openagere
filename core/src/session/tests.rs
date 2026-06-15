@@ -55,6 +55,7 @@ use agere_protocol::request_permissions::RequestPermissionProfile;
 use tracing::Span;
 
 use crate::goals::GoalRuntimeEvent;
+use crate::goals::GoalStopReason;
 use crate::goals::SetGoalRequest;
 use crate::rollout::recorder::RolloutRecorder;
 use crate::state::ActiveTurn;
@@ -7536,8 +7537,7 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
     .await;
     set_total_token_usage(&sess, post_goal_token_usage()).await;
 
-    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalMutationStarting)
-        .await?;
+    let external_mutation_guard = sess.prepare_external_goal_mutation().await?;
 
     let state_db = goal_test_state_db(sess.as_ref()).await?;
     let goal = state_db
@@ -7546,19 +7546,23 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
         .expect("goal should remain persisted");
     assert_eq!(70, goal.tokens_used);
 
-    state_db
+    let previous_goal = goal.clone();
+    let completed_goal = state_db
         .update_thread_goal(
             sess.conversation_id,
             agere_state::ThreadGoalUpdate {
+                objective: None,
                 status: Some(agere_state::ThreadGoalStatus::Complete),
                 token_budget: None,
-                expected_goal_id: Some(goal.goal_id),
+                expected_goal_id: Some(goal.goal_id.clone()),
             },
         )
         .await?
         .expect("goal status update should succeed");
+    drop(external_mutation_guard);
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: agere_state::ThreadGoalStatus::Complete,
+        goal: completed_goal,
+        previous_goal: Some((&previous_goal).into()),
     })
     .await?;
 
@@ -7569,6 +7573,69 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
         .expect("goal should remain persisted");
     assert_eq!(agere_state::ThreadGoalStatus::Complete, goal.status);
     assert_eq!(70, goal.tokens_used);
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn external_goal_mutation_guard_blocks_idle_continuation_until_write_finishes()
+-> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: None,
+        },
+    )
+    .await?;
+
+    let external_mutation_guard = sess.prepare_external_goal_mutation().await?;
+    let mut continue_result = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.goal_runtime_apply(GoalRuntimeEvent::MaybeContinueIfIdle)
+                .await
+        })
+    };
+    if let Ok(result) = timeout(StdDuration::from_millis(50), &mut continue_result).await {
+        panic!("goal continuation was not blocked by external mutation guard: {result:?}");
+    }
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let original = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should remain persisted");
+    let edited = state_db
+        .update_thread_goal(
+            sess.conversation_id,
+            agere_state::ThreadGoalUpdate {
+                objective: Some("Keep improving the benchmark carefully".to_string()),
+                status: Some(agere_state::ThreadGoalStatus::Active),
+                token_budget: None,
+                expected_goal_id: Some(original.goal_id.clone()),
+            },
+        )
+        .await?
+        .expect("goal update should succeed");
+    assert_eq!("Keep improving the benchmark carefully", edited.objective);
+    drop(external_mutation_guard);
+    continue_result.await??;
+
+    let pending_input = sess.get_pending_input().await;
+    let [ResponseInputItem::Message { role, content, .. }] = pending_input.as_slice() else {
+        panic!("expected continuation steering message, got {pending_input:#?}");
+    };
+    assert_eq!("developer", role);
+    let [ContentItem::InputText { text }] = content.as_slice() else {
+        panic!("expected one text span in continuation steering message, got {content:#?}");
+    };
+    assert!(text.contains("Keep improving the benchmark carefully"));
+    assert!(!text.contains("<objective>\nKeep improving the benchmark\n</objective>"));
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 
@@ -7590,7 +7657,7 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
     set_total_token_usage(&sess, post_goal_token_usage()).await;
 
     let state_db = goal_test_state_db(sess.as_ref()).await?;
-    state_db
+    let goal = state_db
         .replace_thread_goal(
             sess.conversation_id,
             "Keep improving the benchmark",
@@ -7599,7 +7666,8 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         )
         .await?;
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: agere_state::ThreadGoalStatus::Active,
+        goal,
+        previous_goal: None,
     })
     .await?;
 
@@ -7632,6 +7700,182 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_thread_goal_edits_objective_without_resetting_usage() -> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: Some(Some(100)),
+        },
+    )
+    .await?;
+    set_total_token_usage(&sess, post_goal_token_usage()).await;
+    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
+        turn_context: tc.as_ref(),
+        tool_name: "shell",
+    })
+    .await?;
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let accounted = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert_eq!(70, accounted.tokens_used);
+
+    let edited = sess
+        .set_thread_goal(
+            tc.as_ref(),
+            SetGoalRequest {
+                objective: Some("Keep improving the benchmark clearly".to_string()),
+                status: Some(ThreadGoalStatus::Active),
+                token_budget: Some(Some(60)),
+            },
+        )
+        .await?;
+
+    let persisted_edit = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("edited goal should remain persisted");
+    assert_eq!(accounted.goal_id, persisted_edit.goal_id);
+    assert_eq!("Keep improving the benchmark clearly", edited.objective);
+    assert_eq!(ThreadGoalStatus::BudgetLimited, edited.status);
+    assert_eq!(Some(60), edited.token_budget);
+    assert_eq!(70, edited.tokens_used);
+    assert_eq!(accounted.time_used_seconds, edited.time_used_seconds);
+    assert_eq!(accounted.created_at.timestamp(), edited.created_at);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_thread_goal_replaces_completed_goal_with_new_objective() -> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: Some(Some(100)),
+        },
+    )
+    .await?;
+    set_total_token_usage(&sess, post_goal_token_usage()).await;
+    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
+        turn_context: tc.as_ref(),
+        tool_name: "shell",
+    })
+    .await?;
+
+    let completed = sess
+        .set_thread_goal(
+            tc.as_ref(),
+            SetGoalRequest {
+                objective: None,
+                status: Some(ThreadGoalStatus::Complete),
+                token_budget: None,
+            },
+        )
+        .await?;
+    assert_eq!(ThreadGoalStatus::Complete, completed.status);
+    assert_eq!(70, completed.tokens_used);
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let completed_state_goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("completed goal should remain persisted");
+
+    let replacement = sess
+        .set_thread_goal(
+            tc.as_ref(),
+            SetGoalRequest {
+                objective: Some("Start the next benchmark pass".to_string()),
+                status: None,
+                token_budget: Some(Some(200)),
+            },
+        )
+        .await?;
+
+    assert_eq!("Start the next benchmark pass", replacement.objective);
+    assert_eq!(ThreadGoalStatus::Active, replacement.status);
+    assert_eq!(Some(200), replacement.token_budget);
+    assert_eq!(0, replacement.tokens_used);
+    assert_eq!(0, replacement.time_used_seconds);
+    assert!(replacement.created_at >= completed.updated_at);
+    let replacement_state_goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("replacement goal should remain persisted");
+    assert_ne!(completed_state_goal.goal_id, replacement_state_goal.goal_id);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn external_active_goal_edit_injects_objective_update_steering() -> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let original = state_db
+        .replace_thread_goal(
+            sess.conversation_id,
+            "Keep improving the benchmark",
+            agere_state::ThreadGoalStatus::Active,
+            /*token_budget*/ Some(100),
+        )
+        .await?;
+    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
+        goal: original.clone(),
+        previous_goal: None,
+    })
+    .await?;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: false,
+        },
+    )
+    .await;
+
+    let edited = state_db
+        .update_thread_goal(
+            sess.conversation_id,
+            agere_state::ThreadGoalUpdate {
+                objective: Some("Keep improving the benchmark clearly".to_string()),
+                status: Some(agere_state::ThreadGoalStatus::Active),
+                token_budget: None,
+                expected_goal_id: Some(original.goal_id.clone()),
+            },
+        )
+        .await?
+        .expect("goal edit should succeed");
+    sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
+        goal: edited,
+        previous_goal: Some((&original).into()),
+    })
+    .await?;
+
+    let pending_input = sess.get_pending_input().await;
+    let [ResponseInputItem::Message { role, content, .. }] = pending_input.as_slice() else {
+        panic!("expected one objective-update steering message, got {pending_input:#?}");
+    };
+    assert_eq!("developer", role);
+    let [ContentItem::InputText { text }] = content.as_slice() else {
+        panic!("expected one text span in objective-update steering message, got {content:#?}");
+    };
+    assert!(text.contains("The active thread goal objective was edited by the user."));
+    assert!(text.contains("Keep improving the benchmark clearly"));
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn usage_limit_runtime_event_stops_active_goal() -> anyhow::Result<()> {
     let (sess, tc, rx) = make_goal_session_and_context_with_rx().await;
@@ -7646,8 +7890,9 @@ async fn usage_limit_runtime_event_stops_active_goal() -> anyhow::Result<()> {
     .await?;
     while rx.try_recv().is_ok() {}
 
-    sess.goal_runtime_apply(GoalRuntimeEvent::UsageLimitReached {
+    sess.goal_runtime_apply(GoalRuntimeEvent::TurnError {
         turn_context: tc.as_ref(),
+        reason: GoalStopReason::UsageLimit,
     })
     .await?;
 
@@ -7664,6 +7909,170 @@ async fn usage_limit_runtime_event_stops_active_goal() -> anyhow::Result<()> {
     };
     assert_eq!(ThreadGoalStatus::UsageLimited, update.goal.status);
     assert_eq!(Some(tc.sub_id.clone()), update.turn_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn usage_limit_runtime_event_accounts_tokens_before_stopping_goal() -> anyhow::Result<()> {
+    let (sess, tc, rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: None,
+        },
+    )
+    .await?;
+    while rx.try_recv().is_ok() {}
+    set_total_token_usage(&sess, post_goal_token_usage()).await;
+
+    sess.goal_runtime_apply(GoalRuntimeEvent::TurnError {
+        turn_context: tc.as_ref(),
+        reason: GoalStopReason::UsageLimit,
+    })
+    .await?;
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert_eq!(agere_state::ThreadGoalStatus::UsageLimited, goal.status);
+    assert_eq!(70, goal.tokens_used);
+
+    let event = rx.recv().await?;
+    let EventMsg::ThreadGoalUpdated(update) = event.msg else {
+        panic!("expected accounting goal update event, got {event:#?}");
+    };
+    assert_eq!(ThreadGoalStatus::Active, update.goal.status);
+    assert_eq!(70, update.goal.tokens_used);
+    assert_eq!(Some(tc.sub_id.clone()), update.turn_id);
+
+    let event = rx.recv().await?;
+    let EventMsg::ThreadGoalUpdated(update) = event.msg else {
+        panic!("expected usage-limited goal update event, got {event:#?}");
+    };
+    assert_eq!(ThreadGoalStatus::UsageLimited, update.goal.status);
+    assert_eq!(70, update.goal.tokens_used);
+    assert_eq!(Some(tc.sub_id.clone()), update.turn_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn turn_error_runtime_event_blocks_active_goal() -> anyhow::Result<()> {
+    let (sess, tc, rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: None,
+        },
+    )
+    .await?;
+    while rx.try_recv().is_ok() {}
+
+    sess.goal_runtime_apply(GoalRuntimeEvent::TurnError {
+        turn_context: tc.as_ref(),
+        reason: GoalStopReason::TurnError,
+    })
+    .await?;
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert_eq!(agere_state::ThreadGoalStatus::Blocked, goal.status);
+
+    let event = rx.recv().await?;
+    let EventMsg::ThreadGoalUpdated(update) = event.msg else {
+        panic!("expected blocked goal update event, got {event:#?}");
+    };
+    assert_eq!(ThreadGoalStatus::Blocked, update.goal.status);
+    assert_eq!(Some(tc.sub_id.clone()), update.turn_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn usage_limit_runtime_event_updates_budget_limited_goal() -> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: Some(Some(10)),
+        },
+    )
+    .await?;
+    set_total_token_usage(&sess, post_goal_token_usage()).await;
+    sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompleted {
+        turn_context: tc.as_ref(),
+        tool_name: "shell",
+    })
+    .await?;
+
+    sess.goal_runtime_apply(GoalRuntimeEvent::TurnError {
+        turn_context: tc.as_ref(),
+        reason: GoalStopReason::UsageLimit,
+    })
+    .await?;
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert_eq!(agere_state::ThreadGoalStatus::UsageLimited, goal.status);
+    assert_eq!(70, goal.tokens_used);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn usage_limit_runtime_event_ignores_stale_turn() -> anyhow::Result<()> {
+    let (sess, stale_turn, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        stale_turn.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: None,
+        },
+    )
+    .await?;
+    sess.goal_runtime_apply(GoalRuntimeEvent::TurnFinished {
+        turn_context: stale_turn.as_ref(),
+        turn_completed: true,
+        tool_calls: 0,
+    })
+    .await?;
+    let current_turn = sess
+        .new_default_turn_with_sub_id("current-goal-turn".to_string())
+        .await;
+    sess.goal_runtime_apply(GoalRuntimeEvent::TurnStarted {
+        turn_context: current_turn.as_ref(),
+        token_usage: TokenUsage::default(),
+    })
+    .await?;
+
+    sess.goal_runtime_apply(GoalRuntimeEvent::TurnError {
+        turn_context: stale_turn.as_ref(),
+        reason: GoalStopReason::UsageLimit,
+    })
+    .await?;
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert_eq!(agere_state::ThreadGoalStatus::Active, goal.status);
 
     Ok(())
 }
@@ -7738,7 +8147,7 @@ async fn completed_goal_accounts_current_turn_tokens_before_tool_response() -> a
     assert_eq!(complete_output["remainingTokens"], 0);
     assert_eq!(
         complete_output["completionBudgetReport"],
-        "Goal achieved. Report final budget usage to the user: tokens used: 580 of 500."
+        "Goal achieved. Report final usage from this tool result's structured goal fields. If `goal.tokenBudget` is present, include token usage from `goal.tokensUsed` and `goal.tokenBudget`. If `goal.timeUsedSeconds` is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language."
     );
     let requests = responses.requests();
     let completion_followup_request = requests
@@ -8119,6 +8528,10 @@ async fn review_task_uses_parent_turn_config_after_provider_switch() {
         review_turn_context.config.model,
         Some(review_turn_context.model_info.slug.clone())
     );
+    assert!(
+        !review_turn_context.tools_config.goal_tools,
+        "review turns must not receive goal tools"
+    );
 
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
 }
@@ -8396,7 +8809,7 @@ async fn create_goal_tool_rejects_existing_goal() {
     };
     assert_eq!(
         output,
-        "cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete"
+        "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first"
     );
 
     let goal = session
@@ -8406,6 +8819,81 @@ async fn create_goal_tool_rejects_existing_goal() {
         .expect("goal should still exist");
     assert_eq!(goal.objective, "Keep the watcher alive");
     assert_eq!(goal.token_budget, Some(123));
+}
+
+#[tokio::test]
+async fn create_goal_tool_replaces_completed_goal() {
+    let (session, turn_context, _rx) = make_goal_session_and_context_with_rx().await;
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let handler = GoalHandler;
+
+    handler
+        .handle(ToolInvocation {
+            session: Arc::clone(&session),
+            turn: Arc::clone(&turn_context),
+            cancellation_token: CancellationToken::new(),
+            tracker: Arc::clone(&tracker),
+            call_id: "create-goal-1".to_string(),
+            tool_name: agere_tools::ToolName::plain("create_goal"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "objective": "Keep the watcher alive",
+                    "token_budget": 123,
+                })
+                .to_string(),
+            },
+        })
+        .await
+        .expect("initial create_goal should succeed");
+    handler
+        .handle(ToolInvocation {
+            session: Arc::clone(&session),
+            turn: Arc::clone(&turn_context),
+            cancellation_token: CancellationToken::new(),
+            tracker: Arc::clone(&tracker),
+            call_id: "complete-goal".to_string(),
+            tool_name: agere_tools::ToolName::plain("update_goal"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "status": "complete",
+                })
+                .to_string(),
+            },
+        })
+        .await
+        .expect("update_goal should mark the goal complete");
+
+    handler
+        .handle(ToolInvocation {
+            session: Arc::clone(&session),
+            turn: Arc::clone(&turn_context),
+            cancellation_token: CancellationToken::new(),
+            tracker,
+            call_id: "create-goal-2".to_string(),
+            tool_name: agere_tools::ToolName::plain("create_goal"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "objective": "Replace the watcher",
+                    "token_budget": 456,
+                })
+                .to_string(),
+            },
+        })
+        .await
+        .expect("create_goal should replace a completed goal");
+
+    let goal = session
+        .get_thread_goal()
+        .await
+        .expect("read thread goal")
+        .expect("goal should still exist");
+    assert_eq!(goal.status, ThreadGoalStatus::Active);
+    assert_eq!(goal.objective, "Replace the watcher");
+    assert_eq!(goal.token_budget, Some(456));
+    assert_eq!(goal.tokens_used, 0);
 }
 
 #[tokio::test]

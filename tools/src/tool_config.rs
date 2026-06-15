@@ -142,7 +142,11 @@ impl ToolsConfig {
         let include_code_mode = features.enabled(Feature::CodeMode);
         let include_code_mode_only = include_code_mode && features.enabled(Feature::CodeModeOnly);
         let include_collab_tools = features.enabled(Feature::Collab);
-        let include_goal_tools = features.enabled(Feature::Goals);
+        let include_goal_tools = features.enabled(Feature::Goals)
+            && !matches!(
+                session_source,
+                SessionSource::SubAgent(SubAgentSource::Review)
+            );
         let include_multi_agent_v2 = features.enabled(Feature::MultiAgentV2);
         let include_agent_jobs = features.enabled(Feature::SpawnCsv);
         let include_default_mode_request_user_input =

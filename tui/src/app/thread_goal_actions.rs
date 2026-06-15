@@ -6,8 +6,10 @@ use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
+use crate::goal_display::GOAL_USAGE;
 use crate::goal_display::goal_status_label;
 use crate::goal_display::goal_usage_summary;
+use agere_app_server_protocol::ThreadGoal;
 use agere_app_server_protocol::ThreadGoalStatus;
 use agere_protocol::ThreadId;
 
@@ -33,13 +35,45 @@ impl App {
 
         let Some(goal) = response.goal else {
             self.chat_widget.add_info_message(
-                "Usage: /goal <objective>".to_string(),
+                GOAL_USAGE.to_string(),
                 Some("No goal is currently set.".to_string()),
             );
             return;
         };
 
         self.chat_widget.show_goal_summary(goal);
+    }
+
+    pub(super) async fn open_thread_goal_editor(
+        &mut self,
+        app_server: &mut AppServerSession,
+        thread_id: Option<ThreadId>,
+    ) {
+        let Some(thread_id) = thread_id else {
+            self.show_no_thread_goal_to_edit();
+            return;
+        };
+
+        let result = app_server.thread_goal_get(thread_id).await;
+        if self.current_displayed_thread_id() != Some(thread_id) {
+            return;
+        }
+
+        let response = match result {
+            Ok(response) => response,
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to read thread goal: {err}"));
+                return;
+            }
+        };
+
+        let Some(goal) = response.goal else {
+            self.show_no_thread_goal_to_edit();
+            return;
+        };
+
+        self.chat_widget.show_goal_edit_prompt(thread_id, goal);
     }
 
     pub(super) async fn set_thread_goal_objective(
@@ -49,34 +83,47 @@ impl App {
         objective: String,
         mode: ThreadGoalSetMode,
     ) {
-        if mode == ThreadGoalSetMode::ConfirmIfExists {
+        let mode = if mode == ThreadGoalSetMode::ConfirmIfExists {
             let result = app_server.thread_goal_get(thread_id).await;
             if self.current_displayed_thread_id() != Some(thread_id) {
                 return;
             }
 
             match result {
-                Ok(response) if response.goal.is_some() => {
-                    self.show_replace_thread_goal_confirmation(thread_id, objective);
-                    return;
-                }
-                Ok(_) => {}
+                Ok(response) => match confirmed_goal_set_mode(response.goal.as_ref(), mode) {
+                    ConfirmedGoalSetMode::Set(mode) => mode,
+                    ConfirmedGoalSetMode::ConfirmReplace => {
+                        self.show_replace_thread_goal_confirmation(thread_id, objective);
+                        return;
+                    }
+                },
                 Err(err) => {
                     self.chat_widget
                         .add_error_message(format!("Failed to read thread goal: {err}"));
                     return;
                 }
             }
-        }
+        } else {
+            mode
+        };
 
-        let result = app_server
-            .thread_goal_set(
-                thread_id,
-                Some(objective),
-                Some(ThreadGoalStatus::Active),
-                /*token_budget*/ None,
-            )
-            .await;
+        let (status, token_budget) = match mode {
+            ThreadGoalSetMode::ConfirmIfExists | ThreadGoalSetMode::ReplaceExisting => {
+                (ThreadGoalStatus::Active, None)
+            }
+            ThreadGoalSetMode::UpdateExisting {
+                status,
+                token_budget,
+            } => (status, Some(token_budget)),
+        };
+
+        let result = if mode == ThreadGoalSetMode::ReplaceExisting {
+            app_server.thread_goal_replace(thread_id, objective).await
+        } else {
+            app_server
+                .thread_goal_set(thread_id, Some(objective), Some(status), token_budget)
+                .await
+        };
         if self.current_displayed_thread_id() != Some(thread_id) {
             return;
         }
@@ -86,9 +133,12 @@ impl App {
                 format!("Goal {}", goal_status_label(response.goal.status)),
                 Some(goal_usage_summary(&response.goal)),
             ),
-            Err(err) => self
-                .chat_widget
-                .add_error_message(format!("Failed to set thread goal: {err}")),
+            Err(err) => {
+                let replacing_goal = mode == ThreadGoalSetMode::ReplaceExisting;
+                let action = if replacing_goal { "replace" } else { "set" };
+                self.chat_widget
+                    .add_error_message(format!("Failed to {action} thread goal: {err}"));
+            }
         }
     }
 
@@ -180,5 +230,103 @@ impl App {
             items,
             ..Default::default()
         });
+    }
+
+    fn show_no_thread_goal_to_edit(&mut self) {
+        self.chat_widget
+            .add_error_message("No goal is currently set.".to_string());
+        self.chat_widget.add_info_message(
+            GOAL_USAGE.to_string(),
+            Some("Create a goal before editing it.".to_string()),
+        );
+    }
+}
+
+fn should_confirm_before_replacing_goal(goal: &ThreadGoal) -> bool {
+    match goal.status {
+        ThreadGoalStatus::Complete => false,
+        ThreadGoalStatus::Active
+        | ThreadGoalStatus::Paused
+        | ThreadGoalStatus::Blocked
+        | ThreadGoalStatus::UsageLimited
+        | ThreadGoalStatus::BudgetLimited => true,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ConfirmedGoalSetMode {
+    Set(ThreadGoalSetMode),
+    ConfirmReplace,
+}
+
+fn confirmed_goal_set_mode(
+    goal: Option<&ThreadGoal>,
+    requested_mode: ThreadGoalSetMode,
+) -> ConfirmedGoalSetMode {
+    match goal {
+        Some(goal) if should_confirm_before_replacing_goal(goal) => {
+            ConfirmedGoalSetMode::ConfirmReplace
+        }
+        Some(_) | None => ConfirmedGoalSetMode::Set(requested_mode),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_goal_does_not_require_replace_confirmation() {
+        assert!(!should_confirm_before_replacing_goal(&test_goal(
+            ThreadGoalStatus::Complete
+        )));
+    }
+
+    #[test]
+    fn completed_goal_set_uses_backend_replacement_without_clear() {
+        assert_eq!(
+            confirmed_goal_set_mode(
+                Some(&test_goal(ThreadGoalStatus::Complete)),
+                ThreadGoalSetMode::ConfirmIfExists,
+            ),
+            ConfirmedGoalSetMode::Set(ThreadGoalSetMode::ConfirmIfExists)
+        );
+    }
+
+    #[test]
+    fn unfinished_goal_set_prompts_before_replacement() {
+        assert_eq!(
+            confirmed_goal_set_mode(
+                Some(&test_goal(ThreadGoalStatus::Active)),
+                ThreadGoalSetMode::ConfirmIfExists,
+            ),
+            ConfirmedGoalSetMode::ConfirmReplace
+        );
+    }
+
+    #[test]
+    fn unfinished_goals_require_replace_confirmation() {
+        for status in [
+            ThreadGoalStatus::Active,
+            ThreadGoalStatus::Paused,
+            ThreadGoalStatus::Blocked,
+            ThreadGoalStatus::UsageLimited,
+            ThreadGoalStatus::BudgetLimited,
+        ] {
+            assert!(should_confirm_before_replacing_goal(&test_goal(status)));
+        }
+    }
+
+    fn test_goal(status: ThreadGoalStatus) -> ThreadGoal {
+        ThreadGoal {
+            thread_id: ThreadId::new().to_string(),
+            objective: "Finish the thing.".to_string(),
+            status,
+            token_budget: None,
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 1_776_272_400,
+            updated_at: 1_776_272_460,
+        }
     }
 }

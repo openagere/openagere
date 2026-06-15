@@ -10,6 +10,9 @@ use agere_protocol::protocol::AskForApproval;
 use agere_protocol::protocol::EventMsg;
 use agere_protocol::protocol::RolloutItem;
 use agere_protocol::protocol::RolloutLine;
+use agere_protocol::protocol::ThreadGoal;
+use agere_protocol::protocol::ThreadGoalStatus;
+use agere_protocol::protocol::ThreadGoalUpdatedEvent;
 use agere_protocol::protocol::TurnContextItem;
 use agere_protocol::protocol::UserMessageEvent;
 use chrono::TimeZone;
@@ -62,6 +65,52 @@ fn write_session_file(root: &Path, ts: &str, uuid: Uuid) -> std::io::Result<Path
         },
     });
     writeln!(file, "{user_event}")?;
+    Ok(path)
+}
+
+fn write_goal_only_session_file(
+    root: &Path,
+    ts: &str,
+    uuid: Uuid,
+    objective: &str,
+) -> std::io::Result<PathBuf> {
+    let day_dir = root.join("sessions/2025/01/03");
+    fs::create_dir_all(&day_dir)?;
+    let path = day_dir.join(format!("rollout-{ts}-{uuid}.jsonl"));
+    let mut file = File::create(&path)?;
+    let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+    let meta = serde_json::json!({
+        "timestamp": ts,
+        "type": "session_meta",
+        "payload": {
+            "id": uuid,
+            "timestamp": ts,
+            "cwd": ".",
+            "originator": "test_originator",
+            "cli_version": "test_version",
+            "source": "cli",
+            "model_provider": "test-provider",
+        },
+    });
+    writeln!(file, "{meta}")?;
+    let goal_event = RolloutLine {
+        timestamp: ts.to_string(),
+        item: RolloutItem::EventMsg(EventMsg::ThreadGoalUpdated(ThreadGoalUpdatedEvent {
+            thread_id,
+            turn_id: None,
+            goal: ThreadGoal {
+                thread_id,
+                objective: objective.to_string(),
+                status: ThreadGoalStatus::Active,
+                token_budget: None,
+                tokens_used: 0,
+                time_used_seconds: 0,
+                created_at: 1_735_891_200,
+                updated_at: 1_735_891_200,
+            },
+        })),
+    };
+    writeln!(file, "{}", serde_json::to_string(&goal_event)?)?;
     Ok(path)
 }
 
@@ -561,6 +610,47 @@ async fn list_threads_db_disabled_does_not_skip_paginated_items() -> std::io::Re
 }
 
 #[tokio::test]
+async fn list_threads_filesystem_search_matches_goal_preview() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+
+    let uuid = Uuid::from_u128(9020);
+    let path = write_goal_only_session_file(
+        home.path(),
+        "2025-01-03T12-00-00",
+        uuid,
+        "Finish the migration",
+    )?;
+
+    let page = RolloutRecorder::list_threads(
+        &config,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Desc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        config.model_provider_id.as_str(),
+        Some("migration"),
+    )
+    .await?;
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].path, path);
+    assert_eq!(
+        page.items[0].thread_id,
+        Some(ThreadId::from_string(&uuid.to_string()).expect("valid thread id"))
+    );
+    assert_eq!(
+        page.items[0].preview.as_deref(),
+        Some("Finish the migration")
+    );
+    assert_eq!(page.items[0].first_user_message, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Result<()> {
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
@@ -946,6 +1036,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         path: filesystem_path.clone(),
         thread_id: Some(filesystem_thread_id),
         first_user_message: Some("filesystem message".to_string()),
+        preview: Some("filesystem message".to_string()),
         cwd: None,
         git_branch: Some("filesystem-branch".to_string()),
         git_sha: Some("filesystem-sha".to_string()),
@@ -962,6 +1053,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         path: state_path,
         thread_id: Some(state_thread_id),
         first_user_message: Some("state message".to_string()),
+        preview: Some("state preview".to_string()),
         cwd: Some(PathBuf::from("/tmp/state-cwd")),
         git_branch: Some("state-branch".to_string()),
         git_sha: Some("state-sha".to_string()),
@@ -983,6 +1075,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         item.first_user_message.as_deref(),
         Some("filesystem message")
     );
+    assert_eq!(item.preview.as_deref(), Some("filesystem message"));
     assert_eq!(item.cwd.as_deref(), Some(Path::new("/tmp/state-cwd")));
     assert_eq!(item.git_branch.as_deref(), Some("state-branch"));
     assert_eq!(item.git_sha.as_deref(), Some("state-sha"));

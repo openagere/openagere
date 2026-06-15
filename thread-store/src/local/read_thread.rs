@@ -220,7 +220,11 @@ async fn stored_thread_from_sqlite_metadata(
         thread_id: metadata.id,
         rollout_path: Some(metadata.rollout_path),
         forked_from_id,
-        preview: metadata.first_user_message.clone().unwrap_or_default(),
+        preview: metadata
+            .preview
+            .clone()
+            .or_else(|| metadata.first_user_message.clone())
+            .unwrap_or_default(),
         name,
         model_provider: if metadata.model_provider.is_empty() {
             store.config.model_provider_id.clone()

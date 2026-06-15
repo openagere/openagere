@@ -750,6 +750,39 @@ impl AppServerSession {
         status: Option<ThreadGoalStatus>,
         token_budget: Option<Option<i64>>,
     ) -> Result<ThreadGoalSetResponse> {
+        self.thread_goal_set_with_replace_existing(
+            thread_id,
+            objective,
+            status,
+            token_budget,
+            /*replace_existing*/ false,
+        )
+        .await
+    }
+
+    pub(crate) async fn thread_goal_replace(
+        &mut self,
+        thread_id: ThreadId,
+        objective: String,
+    ) -> Result<ThreadGoalSetResponse> {
+        self.thread_goal_set_with_replace_existing(
+            thread_id,
+            Some(objective),
+            Some(ThreadGoalStatus::Active),
+            None,
+            /*replace_existing*/ true,
+        )
+        .await
+    }
+
+    async fn thread_goal_set_with_replace_existing(
+        &mut self,
+        thread_id: ThreadId,
+        objective: Option<String>,
+        status: Option<ThreadGoalStatus>,
+        token_budget: Option<Option<i64>>,
+        replace_existing: bool,
+    ) -> Result<ThreadGoalSetResponse> {
         let request_id = self.next_request_id();
         self.client
             .request_typed(ClientRequest::ThreadGoalSet {
@@ -758,6 +791,7 @@ impl AppServerSession {
                     thread_id: thread_id.to_string(),
                     objective,
                     status,
+                    replace_existing,
                     token_budget,
                 },
             })

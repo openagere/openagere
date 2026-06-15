@@ -8729,7 +8729,7 @@ fn thread_from_stored_thread(
     let thread = Thread {
         id: thread.thread_id.to_string(),
         forked_from_id: thread.forked_from_id.map(|id| id.to_string()),
-        preview: thread.first_user_message.unwrap_or(thread.preview),
+        preview: thread.preview,
         ephemeral: false,
         model_provider: if thread.model_provider.is_empty() {
             fallback_provider.to_string()
@@ -8811,7 +8811,7 @@ fn summary_from_stored_thread(
     Some(ConversationSummary {
         conversation_id: thread.thread_id,
         path,
-        preview: thread.first_user_message.unwrap_or(thread.preview),
+        preview: thread.preview,
         // Preserve millisecond precision from the thread store so thread/list cursors
         // round-trip the same ordering key used by pagination queries.
         timestamp: Some(
@@ -8840,7 +8840,7 @@ fn summary_from_stored_thread(
 fn summary_from_state_db_metadata(
     conversation_id: ThreadId,
     path: PathBuf,
-    first_user_message: Option<String>,
+    preview: Option<String>,
     timestamp: String,
     updated_at: String,
     model_provider: String,
@@ -8853,7 +8853,7 @@ fn summary_from_state_db_metadata(
     git_branch: Option<String>,
     git_origin_url: Option<String>,
 ) -> ConversationSummary {
-    let preview = first_user_message.unwrap_or_default();
+    let preview = preview.unwrap_or_default();
     let source = serde_json::from_str(&source)
         .or_else(|_| serde_json::from_value(serde_json::Value::String(source.clone())))
         .unwrap_or(agere_protocol::protocol::SessionSource::Unknown);
@@ -8885,7 +8885,10 @@ fn summary_from_thread_metadata(metadata: &ThreadMetadata) -> ConversationSummar
     summary_from_state_db_metadata(
         metadata.id,
         metadata.rollout_path.clone(),
-        metadata.first_user_message.clone(),
+        metadata
+            .preview
+            .clone()
+            .or_else(|| metadata.first_user_message.clone()),
         metadata
             .created_at
             .to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -9678,6 +9681,48 @@ mod tests {
             summary.updated_at.as_deref(),
             Some("2025-01-02T03:04:06.789Z")
         );
+        assert_eq!(summary.preview, "preview");
+    }
+
+    #[test]
+    fn thread_from_stored_thread_prefers_stored_preview() {
+        let created_at =
+            DateTime::parse_from_rfc3339("2025-01-02T03:04:05.678Z").expect("valid timestamp");
+        let updated_at =
+            DateTime::parse_from_rfc3339("2025-01-02T03:04:06.789Z").expect("valid timestamp");
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000124").expect("valid thread");
+        let stored_thread = StoredThread {
+            thread_id,
+            rollout_path: Some(PathBuf::from("/tmp/thread.jsonl")),
+            forked_from_id: None,
+            preview: "goal preview".to_string(),
+            name: None,
+            model_provider: "openai".to_string(),
+            model: None,
+            reasoning_effort: None,
+            created_at: created_at.with_timezone(&Utc),
+            updated_at: updated_at.with_timezone(&Utc),
+            archived_at: None,
+            cwd: PathBuf::from("/tmp"),
+            cli_version: "0.0.1".to_string(),
+            source: SessionSource::Cli,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            approval_mode: AskForApproval::OnRequest,
+            access_policy: "read-only".to_string(),
+            token_usage: None,
+            first_user_message: Some("first user message".to_string()),
+            history: None,
+        };
+
+        let (thread, history) =
+            thread_from_stored_thread(stored_thread, "fallback", &test_path_buf("/tmp").abs());
+
+        assert_eq!(thread.preview, "goal preview");
+        assert!(history.is_none());
     }
 
     #[test]
@@ -9975,6 +10020,19 @@ mod tests {
 
         assert_eq!(summary.timestamp, Some("2025-09-05T16:53:11Z".to_string()));
         assert_eq!(summary.updated_at, Some("2025-09-05T16:53:12Z".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn summary_from_thread_metadata_prefers_stored_preview() -> Result<()> {
+        let mut metadata =
+            test_thread_metadata(/*model*/ None, /*reasoning_effort*/ None)?;
+        metadata.preview = Some("goal preview".to_string());
+        metadata.first_user_message = Some("first user message".to_string());
+
+        let summary = summary_from_thread_metadata(&metadata);
+
+        assert_eq!(summary.preview, "goal preview");
         Ok(())
     }
 

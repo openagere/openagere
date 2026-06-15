@@ -36,6 +36,9 @@ use agere_protocol::protocol::RolloutLine;
 use agere_protocol::protocol::SessionMeta;
 use agere_protocol::protocol::SessionMetaLine;
 use agere_protocol::protocol::SessionSource;
+use agere_protocol::protocol::ThreadGoal;
+use agere_protocol::protocol::ThreadGoalStatus;
+use agere_protocol::protocol::ThreadGoalUpdatedEvent;
 use agere_protocol::protocol::UserMessageEvent;
 use anyhow::Result;
 
@@ -397,6 +400,162 @@ fn write_session_file_with_provider(
     Ok((dt, uuid))
 }
 
+fn write_session_file_with_goal_preview(
+    root: &Path,
+    ts_str: &str,
+    uuid: Uuid,
+    objective: &str,
+) -> std::io::Result<(OffsetDateTime, Uuid)> {
+    write_session_file_with_goal_preview_and_user_message(root, ts_str, uuid, objective, None)
+}
+
+fn write_session_file_with_goal_preview_and_user_message(
+    root: &Path,
+    ts_str: &str,
+    uuid: Uuid,
+    objective: &str,
+    user_message: Option<&str>,
+) -> std::io::Result<(OffsetDateTime, Uuid)> {
+    let format: &[FormatItem] =
+        format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
+    let dt = PrimitiveDateTime::parse(ts_str, format)
+        .unwrap()
+        .assume_utc();
+    let dir = root
+        .join("sessions")
+        .join(format!("{:04}", dt.year()))
+        .join(format!("{:02}", u8::from(dt.month())))
+        .join(format!("{:02}", dt.day()));
+    fs::create_dir_all(&dir)?;
+
+    let filename = format!("rollout-{ts_str}-{uuid}.jsonl");
+    let file_path = dir.join(filename);
+    let mut file = File::create(file_path)?;
+    let thread_id = thread_id_from_uuid(uuid);
+
+    let meta_line = RolloutLine {
+        timestamp: ts_str.to_string(),
+        item: RolloutItem::SessionMeta(SessionMetaLine {
+            meta: SessionMeta {
+                id: thread_id,
+                forked_from_id: None,
+                timestamp: ts_str.to_string(),
+                cwd: ".".into(),
+                originator: "test_originator".into(),
+                cli_version: "test_version".into(),
+                source: SessionSource::VSCode,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+                model_provider: Some(TEST_PROVIDER.into()),
+                base_instructions: None,
+                dynamic_tools: None,
+                memory_mode: None,
+            },
+            git: None,
+        }),
+    };
+    writeln!(file, "{}", serde_json::to_string(&meta_line)?)?;
+
+    let goal_line = RolloutLine {
+        timestamp: ts_str.to_string(),
+        item: RolloutItem::EventMsg(EventMsg::ThreadGoalUpdated(ThreadGoalUpdatedEvent {
+            thread_id,
+            turn_id: None,
+            goal: ThreadGoal {
+                thread_id,
+                objective: objective.to_string(),
+                status: ThreadGoalStatus::Active,
+                token_budget: None,
+                tokens_used: 0,
+                time_used_seconds: 0,
+                created_at: 1_735_891_200,
+                updated_at: 1_735_891_200,
+            },
+        })),
+    };
+    writeln!(file, "{}", serde_json::to_string(&goal_line)?)?;
+
+    if let Some(message) = user_message {
+        let user_event_line = RolloutLine {
+            timestamp: ts_str.to_string(),
+            item: RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: message.to_string(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+            })),
+        };
+        writeln!(file, "{}", serde_json::to_string(&user_event_line)?)?;
+    }
+
+    let times = FileTimes::new().set_modified(dt.into());
+    file.set_times(times)?;
+    Ok((dt, uuid))
+}
+
+fn write_session_file_with_image_user_event(
+    root: &Path,
+    ts_str: &str,
+    uuid: Uuid,
+) -> std::io::Result<(OffsetDateTime, Uuid)> {
+    let format: &[FormatItem] =
+        format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
+    let dt = PrimitiveDateTime::parse(ts_str, format)
+        .unwrap()
+        .assume_utc();
+    let dir = root
+        .join("sessions")
+        .join(format!("{:04}", dt.year()))
+        .join(format!("{:02}", u8::from(dt.month())))
+        .join(format!("{:02}", dt.day()));
+    fs::create_dir_all(&dir)?;
+
+    let filename = format!("rollout-{ts_str}-{uuid}.jsonl");
+    let file_path = dir.join(filename);
+    let mut file = File::create(file_path)?;
+    let thread_id = thread_id_from_uuid(uuid);
+
+    let meta_line = RolloutLine {
+        timestamp: ts_str.to_string(),
+        item: RolloutItem::SessionMeta(SessionMetaLine {
+            meta: SessionMeta {
+                id: thread_id,
+                forked_from_id: None,
+                timestamp: ts_str.to_string(),
+                cwd: ".".into(),
+                originator: "test_originator".into(),
+                cli_version: "test_version".into(),
+                source: SessionSource::VSCode,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+                model_provider: Some(TEST_PROVIDER.into()),
+                base_instructions: None,
+                dynamic_tools: None,
+                memory_mode: None,
+            },
+            git: None,
+        }),
+    };
+    writeln!(file, "{}", serde_json::to_string(&meta_line)?)?;
+
+    let user_event_line = RolloutLine {
+        timestamp: ts_str.to_string(),
+        item: RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            message: String::new(),
+            images: Some(vec!["https://example.com/image.png".to_string()]),
+            text_elements: Vec::new(),
+            local_images: Vec::new(),
+        })),
+    };
+    writeln!(file, "{}", serde_json::to_string(&user_event_line)?)?;
+
+    let times = FileTimes::new().set_modified(dt.into());
+    file.set_times(times)?;
+    Ok((dt, uuid))
+}
+
 fn write_session_file_with_delayed_user_event(
     root: &Path,
     ts_str: &str,
@@ -575,6 +734,7 @@ async fn test_list_conversations_latest_first() {
                 path: p1,
                 thread_id: Some(thread_id_from_uuid(u3)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -591,6 +751,7 @@ async fn test_list_conversations_latest_first() {
                 path: p2,
                 thread_id: Some(thread_id_from_uuid(u2)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -607,6 +768,7 @@ async fn test_list_conversations_latest_first() {
                 path: p3,
                 thread_id: Some(thread_id_from_uuid(u1)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -716,6 +878,7 @@ async fn test_pagination_cursor() {
                 path: p5,
                 thread_id: Some(thread_id_from_uuid(u5)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -732,6 +895,7 @@ async fn test_pagination_cursor() {
                 path: p4,
                 thread_id: Some(thread_id_from_uuid(u4)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -784,6 +948,7 @@ async fn test_pagination_cursor() {
                 path: p3,
                 thread_id: Some(thread_id_from_uuid(u3)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -800,6 +965,7 @@ async fn test_pagination_cursor() {
                 path: p2,
                 thread_id: Some(thread_id_from_uuid(u2)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -844,6 +1010,7 @@ async fn test_pagination_cursor() {
             path: p1,
             thread_id: Some(thread_id_from_uuid(u1)),
             first_user_message: Some("Hello from user".to_string()),
+            preview: Some("Hello from user".to_string()),
             cwd: Some(Path::new(".").to_path_buf()),
             git_branch: None,
             git_sha: None,
@@ -892,6 +1059,109 @@ async fn test_list_threads_scans_past_head_for_user_event() {
 }
 
 #[tokio::test]
+async fn test_list_threads_includes_goal_preview_without_user_event() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+
+    let uuid = Uuid::from_u128(100);
+    let ts = "2025-05-02T10-30-00";
+    write_session_file_with_goal_preview(home, ts, uuid, "Finish the migration").unwrap();
+
+    let provider_filter = provider_vec(&[TEST_PROVIDER]);
+    let page = get_threads(
+        home,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        INTERACTIVE_SESSION_SOURCES.as_slice(),
+        Some(provider_filter.as_slice()),
+        /*cwd_filters*/ None,
+        TEST_PROVIDER,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].thread_id, Some(thread_id_from_uuid(uuid)));
+    assert_eq!(
+        page.items[0].preview.as_deref(),
+        Some("Finish the migration")
+    );
+    assert_eq!(page.items[0].first_user_message, None);
+}
+
+#[tokio::test]
+async fn test_list_threads_keeps_scanning_for_user_message_after_goal_preview() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+
+    let uuid = Uuid::from_u128(102);
+    let ts = "2025-05-04T10-30-00";
+    write_session_file_with_goal_preview_and_user_message(
+        home,
+        ts,
+        uuid,
+        "Finish the migration",
+        Some("Describe the migration plan"),
+    )
+    .unwrap();
+
+    let provider_filter = provider_vec(&[TEST_PROVIDER]);
+    let page = get_threads(
+        home,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        INTERACTIVE_SESSION_SOURCES.as_slice(),
+        Some(provider_filter.as_slice()),
+        /*cwd_filters*/ None,
+        TEST_PROVIDER,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].thread_id, Some(thread_id_from_uuid(uuid)));
+    assert_eq!(
+        page.items[0].preview.as_deref(),
+        Some("Finish the migration")
+    );
+    assert_eq!(
+        page.items[0].first_user_message.as_deref(),
+        Some("Describe the migration plan")
+    );
+}
+
+#[tokio::test]
+async fn test_list_threads_includes_image_only_user_event() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+
+    let uuid = Uuid::from_u128(101);
+    let ts = "2025-05-03T10-30-00";
+    write_session_file_with_image_user_event(home, ts, uuid).unwrap();
+
+    let provider_filter = provider_vec(&[TEST_PROVIDER]);
+    let page = get_threads(
+        home,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        INTERACTIVE_SESSION_SOURCES.as_slice(),
+        Some(provider_filter.as_slice()),
+        /*cwd_filters*/ None,
+        TEST_PROVIDER,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].thread_id, Some(thread_id_from_uuid(uuid)));
+    assert_eq!(page.items[0].preview.as_deref(), Some("[Image]"));
+    assert_eq!(page.items[0].first_user_message.as_deref(), Some("[Image]"));
+}
+
+#[tokio::test]
 async fn test_get_thread_contents() {
     let temp = TempDir::new().unwrap();
     let home = temp.path();
@@ -936,6 +1206,7 @@ async fn test_get_thread_contents() {
             path: expected_path,
             thread_id: Some(thread_id_from_uuid(uuid)),
             first_user_message: Some("Hello from user".to_string()),
+            preview: Some("Hello from user".to_string()),
             cwd: Some(Path::new(".").to_path_buf()),
             git_branch: None,
             git_sha: None,
@@ -1283,6 +1554,7 @@ async fn test_timestamp_only_cursor_skips_same_second_filesystem_ties() {
                 path: p3,
                 thread_id: Some(thread_id_from_uuid(u3)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,
@@ -1299,6 +1571,7 @@ async fn test_timestamp_only_cursor_skips_same_second_filesystem_ties() {
                 path: p2,
                 thread_id: Some(thread_id_from_uuid(u2)),
                 first_user_message: Some("Hello from user".to_string()),
+                preview: Some("Hello from user".to_string()),
                 cwd: Some(Path::new(".").to_path_buf()),
                 git_branch: None,
                 git_sha: None,

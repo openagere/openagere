@@ -50,6 +50,8 @@ pub struct ThreadItem {
     pub thread_id: Option<ThreadId>,
     /// First user message captured for this thread, if any.
     pub first_user_message: Option<String>,
+    /// Best available user-facing preview.
+    pub preview: Option<String>,
     /// Working directory from session metadata.
     pub cwd: Option<PathBuf>,
     /// Git branch from session metadata.
@@ -88,6 +90,7 @@ struct HeadTailSummary {
     saw_user_event: bool,
     thread_id: Option<ThreadId>,
     first_user_message: Option<String>,
+    preview: Option<String>,
     cwd: Option<PathBuf>,
     git_branch: Option<String>,
     git_sha: Option<String>,
@@ -764,11 +767,12 @@ async fn build_thread_item(
     {
         return None;
     }
-    // Apply filters: must have session meta and at least one user message event
-    if summary.saw_session_meta && summary.saw_user_event {
+    // Apply filters: must have session meta and a user-facing preview.
+    if summary.saw_session_meta && summary.preview.is_some() {
         let HeadTailSummary {
             thread_id,
             first_user_message,
+            preview,
             cwd,
             git_branch,
             git_sha,
@@ -788,6 +792,7 @@ async fn build_thread_item(
         return Some(ThreadItem {
             path,
             thread_id,
+            preview,
             first_user_message,
             cwd,
             git_branch,
@@ -1078,7 +1083,7 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
 
     while lines_scanned < head_limit
         || (summary.saw_session_meta
-            && !summary.saw_user_event
+            && (summary.preview.is_none() || summary.first_user_message.is_none())
             && lines_scanned < head_limit + USER_EVENT_SCAN_LIMIT)
     {
         let line_opt = lines.next_line().await?;
@@ -1131,24 +1136,54 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
                 // Not included in `head`; skip.
             }
             RolloutItem::EventMsg(ev) => {
-                if let EventMsg::UserMessage(user) = ev {
-                    summary.saw_user_event = true;
-                    if summary.first_user_message.is_none() {
-                        let message = strip_user_message_prefix(user.message.as_str()).to_string();
-                        if !message.is_empty() {
-                            summary.first_user_message = Some(message);
-                        }
+                if let Some(preview) = event_msg_preview(&ev) {
+                    if summary.preview.is_none() {
+                        summary.preview = Some(preview.clone());
+                    }
+                    if let EventMsg::UserMessage(_) = ev
+                        && summary.first_user_message.is_none()
+                    {
+                        summary.saw_user_event = true;
+                        summary.first_user_message = Some(preview);
                     }
                 }
             }
         }
 
-        if summary.saw_session_meta && summary.saw_user_event {
+        if summary.saw_session_meta
+            && summary.preview.is_some()
+            && summary.first_user_message.is_some()
+        {
             break;
         }
     }
 
     Ok(summary)
+}
+
+fn event_msg_preview(event: &EventMsg) -> Option<String> {
+    match event {
+        EventMsg::UserMessage(user) => {
+            let message = strip_user_message_prefix(user.message.as_str());
+            if !message.is_empty() {
+                return Some(message.to_string());
+            }
+            if user
+                .images
+                .as_ref()
+                .is_some_and(|images| !images.is_empty())
+                || !user.local_images.is_empty()
+            {
+                return Some("[Image]".to_string());
+            }
+            None
+        }
+        EventMsg::ThreadGoalUpdated(event) => {
+            let objective = event.goal.objective.trim();
+            (!objective.is_empty()).then(|| objective.to_string())
+        }
+        _ => None,
+    }
 }
 
 /// Read up to `HEAD_RECORD_LIMIT` records from the start of the rollout file at `path`.

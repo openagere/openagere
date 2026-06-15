@@ -22,6 +22,7 @@ use crate::connectors;
 use crate::context::ContextualUserFragment;
 use crate::feedback_tags;
 use crate::goals::GoalRuntimeEvent;
+use crate::goals::GoalStopReason;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::emit_hook_completed_events;
 use crate::hook_runtime::inspect_pending_input;
@@ -156,7 +157,8 @@ pub(crate) async fn run_turn(
     // when they would push the thread over the compaction threshold.
     let pre_sampling_compacted = match run_pre_sampling_compact(&sess, &turn_context).await {
         Ok(pre_sampling_compacted) => pre_sampling_compacted,
-        Err(_) => {
+        Err(err) => {
+            stop_goal_after_terminal_turn_error(&sess, &turn_context, &err).await;
             error!("Failed to run pre-sampling compact");
             return None;
         }
@@ -488,7 +490,7 @@ pub(crate) async fn run_turn(
 
                 // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
                 if token_limit_reached && needs_follow_up {
-                    if run_auto_compact(
+                    if let Err(err) = run_auto_compact(
                         &sess,
                         &turn_context,
                         InitialContextInjection::BeforeLastUserMessage,
@@ -496,8 +498,8 @@ pub(crate) async fn run_turn(
                         CompactionPhase::MidTurn,
                     )
                     .await
-                    .is_err()
                     {
+                        stop_goal_after_terminal_turn_error(&sess, &turn_context, &err).await;
                         return None;
                     }
                     client_session.reset_websocket_session();
@@ -649,6 +651,7 @@ pub(crate) async fn run_turn(
             }
             Err(e) => {
                 info!("Turn error: {e:#}");
+                stop_goal_after_terminal_turn_error(&sess, &turn_context, &e).await;
                 let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
                 sess.send_event(&turn_context, event).await;
                 // let the user continue the conversation
@@ -658,6 +661,27 @@ pub(crate) async fn run_turn(
     }
 
     last_agent_message
+}
+
+async fn stop_goal_after_terminal_turn_error(
+    sess: &Arc<Session>,
+    turn_context: &TurnContext,
+    err: &AgereErr,
+) {
+    let reason = if err.to_agere_protocol_error() == AgereErrorInfo::UsageLimitExceeded {
+        GoalStopReason::UsageLimit
+    } else {
+        GoalStopReason::TurnError
+    };
+    if let Err(stop_err) = sess
+        .goal_runtime_apply(GoalRuntimeEvent::TurnError {
+            turn_context,
+            reason,
+        })
+        .await
+    {
+        warn!("failed to stop active goal after terminal turn error: {stop_err}");
+    }
 }
 
 async fn track_turn_resolved_config_analytics(
@@ -1084,14 +1108,6 @@ async fn run_sampling_request(
                 let rate_limits = e.rate_limits.clone();
                 if let Some(rate_limits) = rate_limits {
                     sess.update_rate_limits(&turn_context, *rate_limits).await;
-                }
-                if let Err(err) = sess
-                    .goal_runtime_apply(GoalRuntimeEvent::UsageLimitReached {
-                        turn_context: turn_context.as_ref(),
-                    })
-                    .await
-                {
-                    warn!("failed to stop active goal after usage-limit error: {err}");
                 }
                 return Err(AgereErr::UsageLimitReached(e));
             }

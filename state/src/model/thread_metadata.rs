@@ -85,6 +85,8 @@ pub struct ThreadMetadata {
     pub cli_version: String,
     /// A best-effort thread title.
     pub title: String,
+    /// Best available user-facing preview for discovery and list display.
+    pub preview: Option<String>,
     /// The access policy (SQLite column `access_policy`; stringified enum).
     pub access_policy: String,
     /// The approval mode (stringified enum).
@@ -202,6 +204,7 @@ impl ThreadMetadataBuilder {
             cwd: self.cwd.clone(),
             cli_version: self.cli_version.clone().unwrap_or_default(),
             title: String::new(),
+            preview: None,
             access_policy,
             approval_mode,
             tokens_used: 0,
@@ -273,6 +276,9 @@ impl ThreadMetadata {
         if self.title != other.title {
             diffs.push("title");
         }
+        if self.preview != other.preview {
+            diffs.push("preview");
+        }
         if self.access_policy != other.access_policy {
             diffs.push("access_policy");
         }
@@ -321,6 +327,7 @@ pub(crate) struct ThreadRow {
     cwd: String,
     cli_version: String,
     title: String,
+    preview: String,
     access_policy: String,
     approval_mode: String,
     tokens_used: i64,
@@ -348,6 +355,7 @@ impl ThreadRow {
             cwd: row.try_get("cwd")?,
             cli_version: row.try_get("cli_version")?,
             title: row.try_get("title")?,
+            preview: row.try_get("preview")?,
             access_policy: row.try_get("access_policy")?,
             approval_mode: row.try_get("approval_mode")?,
             tokens_used: row.try_get("tokens_used")?,
@@ -379,6 +387,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             cwd,
             cli_version,
             title,
+            preview,
             access_policy,
             approval_mode,
             tokens_used,
@@ -404,6 +413,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             cwd: PathBuf::from(cwd),
             cli_version,
             title,
+            preview: (!preview.is_empty()).then_some(preview),
             access_policy,
             approval_mode,
             tokens_used,
@@ -488,6 +498,7 @@ mod tests {
             cwd: "/tmp/workspace".to_string(),
             cli_version: "0.0.1".to_string(),
             title: String::new(),
+            preview: String::new(),
             access_policy: "read-only".to_string(),
             approval_mode: "on-request".to_string(),
             tokens_used: 1,
@@ -516,6 +527,7 @@ mod tests {
             cwd: PathBuf::from("/tmp/workspace"),
             cli_version: "0.0.1".to_string(),
             title: String::new(),
+            preview: None,
             access_policy: "read-only".to_string(),
             approval_mode: "on-request".to_string(),
             tokens_used: 1,

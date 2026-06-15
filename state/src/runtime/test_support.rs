@@ -56,6 +56,7 @@ pub(super) fn test_thread_metadata(
         cwd,
         cli_version: "0.0.1".to_string(),
         title: String::new(),
+        preview: Some("hello".to_string()),
         access_policy: crate::extract::enum_to_string(&"read-only".to_string()),
         approval_mode: crate::extract::enum_to_string(&AskForApproval::OnRequest),
         tokens_used: 0,

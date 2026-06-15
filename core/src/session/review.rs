@@ -24,7 +24,6 @@ pub(super) async fn spawn_review_thread(
     let _ = review_features.disable(Feature::WebSearchRequest);
     let _ = review_features.disable(Feature::WebSearchCached);
     let review_web_search_mode = WebSearchMode::Disabled;
-    let goal_tools_supported = !config.ephemeral && parent_turn_context.tools_config.goal_tools;
     let provider_capabilities = parent_turn_context.provider.capabilities();
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &review_model_info,
@@ -56,7 +55,7 @@ pub(super) async fn spawn_review_thread(
     .with_spawn_agent_usage_hint(config.multi_agent_v2.usage_hint_enabled)
     .with_spawn_agent_usage_hint_text(config.multi_agent_v2.usage_hint_text.clone())
     .with_hide_spawn_agent_metadata(config.multi_agent_v2.hide_spawn_agent_metadata)
-    .with_goal_tools_allowed(goal_tools_supported)
+    .with_goal_tools_allowed(false)
     .with_max_concurrent_threads_per_session(config.agent_max_threads)
     .with_wait_agent_min_timeout_ms(
         review_features

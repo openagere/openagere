@@ -810,6 +810,7 @@ async fn goal_control_slash_commands_emit_goal_events() {
     let cases = [
         ("/goal clear", None),
         ("/goal pause", Some(AppThreadGoalStatus::Paused)),
+        ("/goal resume", Some(AppThreadGoalStatus::Active)),
         ("/goal unpause", Some(AppThreadGoalStatus::Active)),
     ];
 
@@ -845,6 +846,26 @@ async fn goal_control_slash_commands_emit_goal_events() {
                 assert_eq!(actual_thread_id, thread_id);
             }
         }
+    }
+}
+
+#[tokio::test]
+async fn goal_edit_slash_command_opens_goal_editor() {
+    for command in ["/goal edit", "/goal EDIT"] {
+        let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+        chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+        let thread_id = ThreadId::new();
+        chat.thread_id = Some(thread_id);
+
+        submit_composer_text(&mut chat, command);
+
+        assert_matches!(
+            rx.try_recv(),
+            Ok(AppEvent::OpenThreadGoalEditor {
+                thread_id: Some(opened),
+            }) if opened == thread_id
+        );
+        assert_no_submit_op(&mut op_rx);
     }
 }
 

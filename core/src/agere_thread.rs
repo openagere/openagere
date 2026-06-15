@@ -36,6 +36,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::watch;
 
 use agere_rollout::state_db::StateDbHandle;
@@ -89,6 +90,10 @@ pub struct AgereThread {
     _watch_registration: WatchRegistration,
 }
 
+pub struct ExternalGoalMutationGuard {
+    _permit: OwnedSemaphorePermit,
+}
+
 /// Conduit for the bidirectional stream of messages that compose a thread
 /// (formerly called a conversation) in Agere.
 impl AgereThread {
@@ -134,22 +139,31 @@ impl AgereThread {
             .await
     }
 
-    pub async fn prepare_external_goal_mutation(&self) {
-        if let Err(err) = self
-            .agere
-            .session
-            .goal_runtime_apply(GoalRuntimeEvent::ExternalMutationStarting)
-            .await
-        {
-            tracing::warn!("failed to prepare external goal mutation: {err}");
+    pub async fn prepare_external_goal_mutation(&self) -> Option<ExternalGoalMutationGuard> {
+        match self.agere.session.prepare_external_goal_mutation().await {
+            Ok(permit) => Some(ExternalGoalMutationGuard { _permit: permit }),
+            Err(err) => {
+                tracing::warn!("failed to prepare external goal mutation: {err}");
+                None
+            }
         }
     }
 
-    pub async fn apply_external_goal_set(&self, status: agere_state::ThreadGoalStatus) {
+    pub async fn apply_external_goal_set(
+        &self,
+        goal: agere_state::ThreadGoal,
+        previous_goal: Option<agere_state::ThreadGoal>,
+    ) {
+        let previous_goal = previous_goal
+            .as_ref()
+            .map(crate::goals::PreviousGoalSnapshot::from);
         if let Err(err) = self
             .agere
             .session
-            .goal_runtime_apply(GoalRuntimeEvent::ExternalSet { status })
+            .goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
+                goal,
+                previous_goal,
+            })
             .await
         {
             tracing::warn!("failed to apply external goal status runtime effects: {err}");

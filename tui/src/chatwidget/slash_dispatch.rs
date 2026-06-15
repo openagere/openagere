@@ -9,6 +9,7 @@ use super::*;
 use crate::app_event::ThreadGoalSetMode;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands;
+use crate::goal_display::GOAL_USAGE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -29,7 +30,6 @@ const SIDE_STARTING_CONTEXT_LABEL: &str = "Side starting...";
 const SIDE_REVIEW_UNAVAILABLE_MESSAGE: &str =
     "'/side' is unavailable while code review is running.";
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str = "Press Esc to return to the main thread first.";
-const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 
 impl ChatWidget {
@@ -618,8 +618,19 @@ impl ChatWidget {
                 }
                 let control_command = match trimmed.to_ascii_lowercase().as_str() {
                     "clear" => Some(GoalControlCommand::Clear),
+                    "edit" => {
+                        self.app_event_tx.send(AppEvent::OpenThreadGoalEditor {
+                            thread_id: self.thread_id,
+                        });
+                        if source == SlashCommandDispatchSource::Live {
+                            self.bottom_pane.drain_pending_submission_state();
+                        }
+                        return;
+                    }
                     "pause" => Some(GoalControlCommand::SetStatus(AppThreadGoalStatus::Paused)),
-                    "unpause" => Some(GoalControlCommand::SetStatus(AppThreadGoalStatus::Active)),
+                    "resume" | "unpause" => {
+                        Some(GoalControlCommand::SetStatus(AppThreadGoalStatus::Active))
+                    }
                     _ => None,
                 };
                 if let Some(command) = control_command {

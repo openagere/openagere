@@ -99,55 +99,84 @@ impl AgereMessageProcessor {
             return;
         }
 
-        if let Some(thread) = running_thread.as_ref() {
-            thread.prepare_external_goal_mutation().await;
-        }
+        let external_goal_mutation_guard = if let Some(thread) = running_thread.as_ref() {
+            thread.prepare_external_goal_mutation().await
+        } else {
+            None
+        };
 
-        let goal = if let Some(objective) = objective {
-            match state_db.get_thread_goal(thread_id).await {
-                Ok(goal) => {
-                    if let Some(goal) = goal.as_ref().filter(|goal| {
-                        goal.objective == objective
-                            && goal.status != agere_state::ThreadGoalStatus::Complete
-                    }) {
-                        state_db
-                            .update_thread_goal(
-                                thread_id,
-                                agere_state::ThreadGoalUpdate {
-                                    status,
-                                    token_budget: params.token_budget,
-                                    expected_goal_id: Some(goal.goal_id.clone()),
-                                },
-                            )
-                            .await
-                            .and_then(|goal| {
-                                goal.ok_or_else(|| {
-                                    anyhow::anyhow!(
-                                        "cannot update goal for thread {thread_id}: no goal exists"
-                                    )
-                                })
-                            })
-                    } else {
-                        state_db
-                            .replace_thread_goal(
-                                thread_id,
-                                objective,
-                                status.unwrap_or(agere_state::ThreadGoalStatus::Active),
-                                params.token_budget.flatten(),
-                            )
-                            .await
-                    }
+        let goal_result = if let Some(objective) = objective {
+            let existing_goal = match state_db.get_thread_goal(thread_id).await {
+                Ok(goal) => goal,
+                Err(err) => {
+                    drop(external_goal_mutation_guard);
+                    self.send_invalid_request_error(request_id, err.to_string())
+                        .await;
+                    return;
                 }
-                Err(err) => Err(err),
+            };
+            match existing_goal.as_ref() {
+                Some(existing_goal)
+                    if existing_goal.status != agere_state::ThreadGoalStatus::Complete
+                        && !params.replace_existing =>
+                {
+                    state_db
+                        .update_thread_goal(
+                            thread_id,
+                            agere_state::ThreadGoalUpdate {
+                                objective: Some(objective.to_string()),
+                                status,
+                                token_budget: params.token_budget,
+                                expected_goal_id: Some(existing_goal.goal_id.clone()),
+                            },
+                        )
+                        .await
+                        .and_then(|goal| {
+                            goal.ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "cannot update goal for thread {thread_id}: no goal exists"
+                                )
+                            })
+                        })
+                        .map(|goal| (goal, Some(existing_goal.clone())))
+                }
+                existing_goal => state_db
+                    .replace_thread_goal(
+                        thread_id,
+                        objective,
+                        status.unwrap_or(agere_state::ThreadGoalStatus::Active),
+                        params.token_budget.flatten(),
+                    )
+                    .await
+                    .map(|goal| (goal, existing_goal.cloned())),
             }
         } else {
+            let existing_goal = match state_db.get_thread_goal(thread_id).await {
+                Ok(Some(goal)) => goal,
+                Ok(None) => {
+                    drop(external_goal_mutation_guard);
+                    self.send_invalid_request_error(
+                        request_id,
+                        format!("cannot update goal for thread {thread_id}: no goal exists"),
+                    )
+                    .await;
+                    return;
+                }
+                Err(err) => {
+                    drop(external_goal_mutation_guard);
+                    self.send_invalid_request_error(request_id, err.to_string())
+                        .await;
+                    return;
+                }
+            };
             state_db
                 .update_thread_goal(
                     thread_id,
                     agere_state::ThreadGoalUpdate {
+                        objective: None,
                         status,
                         token_budget: params.token_budget,
-                        expected_goal_id: None,
+                        expected_goal_id: Some(existing_goal.goal_id.clone()),
                     },
                 )
                 .await
@@ -156,9 +185,11 @@ impl AgereMessageProcessor {
                         anyhow::anyhow!("cannot update goal for thread {thread_id}: no goal exists")
                     })
                 })
+                .map(|goal| (goal, Some(existing_goal)))
         };
+        drop(external_goal_mutation_guard);
 
-        let goal = match goal {
+        let (state_goal, previous_goal) = match goal_result {
             Ok(goal) => goal,
             Err(err) => {
                 self.send_invalid_request_error(request_id, err.to_string())
@@ -166,8 +197,14 @@ impl AgereMessageProcessor {
                 return;
             }
         };
-        let goal_status = goal.status;
-        let goal = api_thread_goal_from_state(goal);
+        if objective.is_some()
+            && let Err(err) = state_db
+                .set_thread_preview_if_empty(thread_id, state_goal.objective.as_str())
+                .await
+        {
+            warn!("failed to set empty thread preview from goal objective for {thread_id}: {err}");
+        }
+        let goal = api_thread_goal_from_state(state_goal.clone());
         self.outgoing
             .send_response(
                 request_id.clone(),
@@ -177,7 +214,9 @@ impl AgereMessageProcessor {
         self.emit_thread_goal_updated_ordered(thread_id, goal, listener_command_tx)
             .await;
         if let Some(thread) = running_thread.as_ref() {
-            thread.apply_external_goal_set(goal_status).await;
+            thread
+                .apply_external_goal_set(state_goal, previous_goal)
+                .await;
         }
     }
 
@@ -292,9 +331,11 @@ impl AgereMessageProcessor {
         )
         .await;
 
-        if let Some(thread) = running_thread.as_ref() {
-            thread.prepare_external_goal_mutation().await;
-        }
+        let external_goal_mutation_guard = if let Some(thread) = running_thread.as_ref() {
+            thread.prepare_external_goal_mutation().await
+        } else {
+            None
+        };
 
         let listener_command_tx = {
             let thread_state = self.thread_state_manager.thread_state(thread_id).await;
@@ -304,11 +345,13 @@ impl AgereMessageProcessor {
         let cleared = match state_db.delete_thread_goal(thread_id).await {
             Ok(cleared) => cleared,
             Err(err) => {
+                drop(external_goal_mutation_guard);
                 self.send_internal_error(request_id, format!("failed to clear thread goal: {err}"))
                     .await;
                 return;
             }
         };
+        drop(external_goal_mutation_guard);
 
         if cleared && let Some(thread) = running_thread.as_ref() {
             thread.apply_external_goal_clear().await;
@@ -437,7 +480,6 @@ impl AgereMessageProcessor {
             .await;
     }
 }
-
 fn validate_goal_budget(value: Option<i64>) -> Result<(), String> {
     if let Some(value) = value
         && value <= 0

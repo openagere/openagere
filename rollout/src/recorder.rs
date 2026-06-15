@@ -1054,6 +1054,7 @@ fn fill_missing_thread_item_metadata(item: &mut ThreadItem, state_item: ThreadIt
         path: _state_path,
         thread_id: _state_thread_id,
         first_user_message,
+        preview,
         cwd,
         git_branch,
         git_sha,
@@ -1069,6 +1070,9 @@ fn fill_missing_thread_item_metadata(item: &mut ThreadItem, state_item: ThreadIt
 
     if item.first_user_message.is_none() {
         item.first_user_message = first_user_message;
+    }
+    if item.preview.is_none() {
+        item.preview = preview;
     }
     if item.cwd.is_none() {
         item.cwd = cwd;
@@ -1311,18 +1315,23 @@ async fn filter_thread_items_by_search_term(
         return Ok(());
     };
 
-    // The file-backed fallback only has the thread title in the sidecar session index.
-    // Match the SQLite path's title substring filter so search pagination behaves the same
-    // whether the state DB is available or not.
+    // Match the SQLite path's title-or-preview substring filter so search pagination behaves
+    // the same whether the state DB is available or not.
     let thread_ids = items
         .iter()
         .filter_map(|item| item.thread_id)
         .collect::<HashSet<_>>();
     let thread_names = find_thread_names_by_ids(agere_home, &thread_ids).await?;
     items.retain(|item| {
-        item.thread_id
+        let title_matches = item
+            .thread_id
             .and_then(|thread_id| thread_names.get(&thread_id))
-            .is_some_and(|title| title.contains(search_term))
+            .is_some_and(|title| title.contains(search_term));
+        let preview_matches = item
+            .preview
+            .as_deref()
+            .is_some_and(|preview| preview.contains(search_term));
+        title_matches || preview_matches
     });
     Ok(())
 }
@@ -1823,9 +1832,14 @@ impl From<agere_state::ThreadsPage> for ThreadsPage {
 }
 
 fn thread_item_from_state_metadata(item: agere_state::ThreadMetadata) -> ThreadItem {
+    let preview = item
+        .preview
+        .clone()
+        .or_else(|| item.first_user_message.clone());
     ThreadItem {
         path: item.rollout_path,
         thread_id: Some(item.id),
+        preview,
         first_user_message: item.first_user_message,
         cwd: Some(item.cwd),
         git_branch: item.git_branch,

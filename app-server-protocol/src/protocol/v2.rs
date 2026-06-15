@@ -3912,6 +3912,8 @@ pub struct ThreadGoalSetParams {
     pub objective: Option<String>,
     #[ts(optional = nullable)]
     pub status: Option<ThreadGoalStatus>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replace_existing: bool,
     #[serde(
         default,
         deserialize_with = "super::serde_helpers::deserialize_double_option",

@@ -22,6 +22,7 @@ SELECT
     threads.cwd,
     threads.cli_version,
     threads.title,
+    threads.preview,
     threads.access_policy,
     threads.approval_mode,
     threads.tokens_used,
@@ -47,6 +48,29 @@ WHERE threads.id = ?
             .fetch_optional(self.pool.as_ref())
             .await?;
         Ok(row.and_then(|row| row.try_get("memory_mode").ok()))
+    }
+
+    pub async fn set_thread_preview_if_empty(
+        &self,
+        thread_id: ThreadId,
+        preview: &str,
+    ) -> anyhow::Result<bool> {
+        let preview = preview.trim();
+        if preview.is_empty() {
+            return Ok(false);
+        }
+        let result = sqlx::query(
+            r#"
+UPDATE threads
+SET preview = ?
+WHERE id = ? AND preview = ''
+            "#,
+        )
+        .bind(preview)
+        .bind(thread_id.to_string())
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Get dynamic tools for a thread, if present.
@@ -467,6 +491,7 @@ ON CONFLICT(child_thread_id) DO NOTHING
         metadata: &crate::ThreadMetadata,
     ) -> anyhow::Result<bool> {
         let updated_at = self.allocate_thread_updated_at(metadata.updated_at)?;
+        let preview = metadata_preview(metadata);
         let result = sqlx::query(
             r#"
 INSERT INTO threads (
@@ -486,6 +511,7 @@ INSERT INTO threads (
     cwd,
     cli_version,
     title,
+    preview,
     access_policy,
     approval_mode,
     tokens_used,
@@ -496,7 +522,7 @@ INSERT INTO threads (
     git_branch,
     git_origin_url,
     memory_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO NOTHING
             "#,
         )
@@ -521,6 +547,7 @@ ON CONFLICT(id) DO NOTHING
         .bind(metadata.cwd.display().to_string())
         .bind(metadata.cli_version.as_str())
         .bind(metadata.title.as_str())
+        .bind(preview)
         .bind(metadata.access_policy.as_str())
         .bind(metadata.approval_mode.as_str())
         .bind(metadata.tokens_used)
@@ -661,6 +688,7 @@ WHERE id = ?
         creation_memory_mode: Option<&str>,
     ) -> anyhow::Result<()> {
         let updated_at = self.allocate_thread_updated_at(metadata.updated_at)?;
+        let preview = metadata_preview(metadata);
         sqlx::query(
             r#"
 INSERT INTO threads (
@@ -680,6 +708,7 @@ INSERT INTO threads (
     cwd,
     cli_version,
     title,
+    preview,
     access_policy,
     approval_mode,
     tokens_used,
@@ -690,7 +719,7 @@ INSERT INTO threads (
     git_branch,
     git_origin_url,
     memory_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     rollout_path = excluded.rollout_path,
     created_at = excluded.created_at,
@@ -707,6 +736,7 @@ ON CONFLICT(id) DO UPDATE SET
     cwd = excluded.cwd,
     cli_version = excluded.cli_version,
     title = excluded.title,
+    preview = COALESCE(NULLIF(excluded.preview, ''), threads.preview),
     access_policy = excluded.access_policy,
     approval_mode = excluded.approval_mode,
     tokens_used = excluded.tokens_used,
@@ -739,6 +769,7 @@ ON CONFLICT(id) DO UPDATE SET
         .bind(metadata.cwd.display().to_string())
         .bind(metadata.cli_version.as_str())
         .bind(metadata.title.as_str())
+        .bind(preview)
         .bind(metadata.access_policy.as_str())
         .bind(metadata.approval_mode.as_str())
         .bind(metadata.tokens_used)
@@ -955,6 +986,7 @@ SELECT
     threads.cwd,
     threads.cli_version,
     threads.title,
+    threads.preview,
     threads.access_policy,
     threads.approval_mode,
     threads.tokens_used,
@@ -1031,7 +1063,7 @@ pub(super) fn push_thread_filters<'a>(
     } else {
         builder.push(" AND threads.archived = 0");
     }
-    builder.push(" AND threads.first_user_message <> ''");
+    builder.push(" AND threads.preview <> ''");
     if !allowed_sources.is_empty() {
         builder.push(" AND threads.source IN (");
         let mut separated = builder.separated(", ");
@@ -1065,9 +1097,11 @@ pub(super) fn push_thread_filters<'a>(
         None => {}
     }
     if let Some(search_term) = search_term {
-        builder.push(" AND instr(threads.title, ");
+        builder.push(" AND (instr(threads.title, ");
         builder.push_bind(search_term);
-        builder.push(") > 0");
+        builder.push(") > 0 OR instr(threads.preview, ");
+        builder.push_bind(search_term);
+        builder.push(") > 0)");
     }
     if let Some(anchor) = anchor {
         let anchor_ts = datetime_to_epoch_millis(anchor.ts);
@@ -1109,6 +1143,14 @@ pub(super) fn push_thread_order_and_limit(
     builder.push(order_direction);
     builder.push(" LIMIT ");
     builder.push_bind(limit as i64);
+}
+
+fn metadata_preview(metadata: &crate::ThreadMetadata) -> &str {
+    metadata
+        .preview
+        .as_deref()
+        .or(metadata.first_user_message.as_deref())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1617,6 +1659,80 @@ mod tests {
             persisted.first_user_message.as_deref(),
             Some("first-user-message")
         );
+    }
+
+    #[tokio::test]
+    async fn upsert_thread_preserves_existing_preview_when_incoming_preview_is_empty() {
+        let agere_home = unique_temp_dir();
+        let runtime = StateRuntime::init(agere_home.clone(), "test-provider".to_string())
+            .await
+            .expect("state db should initialize");
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000792").expect("valid thread id");
+        let mut metadata = test_thread_metadata(&agere_home, thread_id, agere_home.clone());
+        metadata.first_user_message = None;
+        metadata.preview = Some("migrated goal preview".to_string());
+
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("initial upsert should succeed");
+
+        let mut rollout_metadata = metadata.clone();
+        rollout_metadata.preview = None;
+        runtime
+            .upsert_thread(&rollout_metadata)
+            .await
+            .expect("rollout upsert should succeed");
+
+        let persisted = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("thread should load")
+            .expect("thread should exist");
+        assert_eq!(persisted.preview.as_deref(), Some("migrated goal preview"));
+    }
+
+    #[tokio::test]
+    async fn set_thread_preview_if_empty_only_fills_blank_preview() {
+        let agere_home = unique_temp_dir();
+        let runtime = StateRuntime::init(agere_home.clone(), "test-provider".to_string())
+            .await
+            .expect("state db should initialize");
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000793").expect("valid thread id");
+        let mut metadata = test_thread_metadata(&agere_home, thread_id, agere_home.clone());
+        metadata.first_user_message = None;
+        metadata.preview = None;
+
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("initial upsert should succeed");
+
+        let changed = runtime
+            .set_thread_preview_if_empty(thread_id, "  ")
+            .await
+            .expect("blank preview set should succeed");
+        assert!(!changed);
+        let changed = runtime
+            .set_thread_preview_if_empty(thread_id, "  goal preview  ")
+            .await
+            .expect("preview set should succeed");
+        assert!(changed);
+        let changed = runtime
+            .set_thread_preview_if_empty(thread_id, "new preview")
+            .await
+            .expect("second preview set should succeed");
+        assert!(!changed);
+
+        let persisted = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("thread should load")
+            .expect("thread should exist");
+        assert_eq!(persisted.preview.as_deref(), Some("goal preview"));
+        assert_eq!(persisted.first_user_message, None);
     }
 
     #[tokio::test]
