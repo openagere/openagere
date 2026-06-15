@@ -159,14 +159,28 @@ async fn handle_update_goal(
     arguments: &str,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let args: UpdateGoalArgs = parse_arguments(arguments)?;
-    if args.status != ThreadGoalStatus::Complete {
+    if !matches!(
+        args.status,
+        ThreadGoalStatus::Complete | ThreadGoalStatus::Blocked
+    ) {
         return Err(FunctionCallError::RespondToModel(
-            "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
+            "update_goal can only mark the existing goal complete or blocked; pause, resume, budget-limited, and usage-limited status changes are controlled by the user or system"
                 .to_string(),
         ));
     }
+    let accounting_mode = match args.status {
+        ThreadGoalStatus::Complete => agere_state::ThreadGoalAccountingMode::ActiveOrComplete,
+        ThreadGoalStatus::Blocked => agere_state::ThreadGoalAccountingMode::ActiveOrStopped,
+        ThreadGoalStatus::Active
+        | ThreadGoalStatus::Paused
+        | ThreadGoalStatus::UsageLimited
+        | ThreadGoalStatus::BudgetLimited => unreachable!("status validated above"),
+    };
     session
-        .goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal { turn_context })
+        .goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
+            turn_context,
+            accounting_mode,
+        })
         .await
         .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
     let goal = session
@@ -174,13 +188,20 @@ async fn handle_update_goal(
             turn_context,
             SetGoalRequest {
                 objective: None,
-                status: Some(ThreadGoalStatus::Complete),
+                status: Some(args.status),
                 token_budget: None,
             },
         )
         .await
         .map_err(|err| FunctionCallError::RespondToModel(format_goal_error(err)))?;
-    goal_response(Some(goal), CompletionBudgetReport::Include)
+    goal_response(
+        Some(goal),
+        if args.status == ThreadGoalStatus::Complete {
+            CompletionBudgetReport::Include
+        } else {
+            CompletionBudgetReport::Omit
+        },
+    )
 }
 
 fn format_goal_error(err: anyhow::Error) -> String {

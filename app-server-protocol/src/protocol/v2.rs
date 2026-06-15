@@ -3862,6 +3862,8 @@ v2_enum_from_core! {
     pub enum ThreadGoalStatus from CoreThreadGoalStatus {
         Active,
         Paused,
+        Blocked,
+        UsageLimited,
         BudgetLimited,
         Complete,
     }

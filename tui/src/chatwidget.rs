@@ -7679,6 +7679,10 @@ impl ChatWidget {
                         status: match goal.status {
                             ProtocolThreadGoalStatus::Active => AppThreadGoalStatus::Active,
                             ProtocolThreadGoalStatus::Paused => AppThreadGoalStatus::Paused,
+                            ProtocolThreadGoalStatus::Blocked => AppThreadGoalStatus::Blocked,
+                            ProtocolThreadGoalStatus::UsageLimited => {
+                                AppThreadGoalStatus::UsageLimited
+                            }
                             ProtocolThreadGoalStatus::BudgetLimited => {
                                 AppThreadGoalStatus::BudgetLimited
                             }
@@ -10663,12 +10667,7 @@ impl ChatWidget {
     pub(crate) fn set_model_catalog(&mut self, catalog: Arc<ModelCatalog>) {
         self.model_catalog = catalog;
         let model = self.current_model().to_string();
-        if let Some(context_window) = self.model_catalog.find_model_context_window(&model)
-            && let Some(mut info) = self.token_info.take()
-        {
-            info.model_context_window = Some(context_window);
-            self.apply_token_info(info);
-        }
+        self.refresh_context_window_for_model(&model);
     }
 
     pub(crate) fn current_plan_type(&self) -> Option<PlanType> {
@@ -10735,13 +10734,16 @@ impl ChatWidget {
         {
             mask.model = Some(model.to_string());
         }
-        if let Some(context_window) = self.model_catalog.find_model_context_window(model)
-            && let Some(mut info) = self.token_info.take()
-        {
-            info.model_context_window = Some(context_window);
+        self.refresh_context_window_for_model(model);
+        self.refresh_model_dependent_surfaces();
+    }
+
+    fn refresh_context_window_for_model(&mut self, model: &str) {
+        let context_window = self.model_catalog.find_model_context_window(model);
+        if let Some(mut info) = self.token_info.take() {
+            info.model_context_window = context_window;
             self.apply_token_info(info);
         }
-        self.refresh_model_dependent_surfaces();
     }
 
     fn set_service_tier_selection(&mut self, service_tier: Option<ServiceTier>) {

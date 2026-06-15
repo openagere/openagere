@@ -19,7 +19,7 @@ Scenario: Guardian review request layout
     [09] The Agere agent has requested the following action:\n
     [10] >>> APPROVAL REQUEST START\n
     [11] Retry reason:\n
-    [12] Network access to \"github.com\" is blocked by policy.\n\n
+    [12] Network access to "github.com" is blocked by policy.\n\n
     [13] Assess the exact planned action below. Use read-only tool checks when local state matters.\n
     [14] Planned action JSON:\n
     [15] {\n  "command": [\n    "git",\n    "push",\n    "origin",\n    "guardian-approval-mvp"\n  ],\n  "cwd": "/repo/core",\n  "justification": "Need to push the reviewed docs fix to the repo remote.",\n  "permission_level": "UseDefault",\n  "tool": "shell"\n}\n

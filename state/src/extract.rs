@@ -76,10 +76,10 @@ fn apply_turn_context(metadata: &mut ThreadMetadata, turn_ctx: &TurnContextItem)
     metadata.model = Some(turn_ctx.model.clone());
     metadata.reasoning_effort = turn_ctx.effort;
     metadata.approval_mode = enum_to_string(&turn_ctx.approval_policy);
-    if let Some(profile) = turn_ctx.permission_profile.as_ref() {
-        if let Ok(policy) = profile.to_legacy_access_policy(&turn_ctx.cwd) {
-            metadata.access_policy = policy;
-        }
+    if let Some(profile) = turn_ctx.permission_profile.as_ref()
+        && let Ok(policy) = profile.to_legacy_access_policy(&turn_ctx.cwd)
+    {
+        metadata.access_policy = policy;
     }
 }
 

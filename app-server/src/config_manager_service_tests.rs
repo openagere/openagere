@@ -7,7 +7,6 @@ use agere_config::LoaderOverrides;
 use agere_utils_fs::AbsolutePathBuf;
 use anyhow::Result;
 use pretty_assertions::assert_eq;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::tempdir;
 

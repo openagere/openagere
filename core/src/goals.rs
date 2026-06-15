@@ -86,6 +86,7 @@ pub(crate) enum GoalRuntimeEvent<'a> {
     },
     ToolCompletedGoal {
         turn_context: &'a TurnContext,
+        accounting_mode: agere_state::ThreadGoalAccountingMode,
     },
     TurnFinished {
         turn_context: &'a TurnContext,
@@ -96,6 +97,9 @@ pub(crate) enum GoalRuntimeEvent<'a> {
     TaskAborted {
         turn_context: Option<&'a TurnContext>,
         reason: TurnAbortReason,
+    },
+    UsageLimitReached {
+        turn_context: &'a TurnContext,
     },
     ExternalMutationStarting,
     ExternalSet {
@@ -298,15 +302,26 @@ impl Session {
             } => Box::pin(async move {
                 self.reset_thread_goal_continuation_suppression();
                 if tool_name != agere_tools::UPDATE_GOAL_TOOL_NAME {
-                    self.account_thread_goal_progress(turn_context, BudgetLimitSteering::Allowed)
-                        .await?;
+                    self.account_thread_goal_progress(
+                        turn_context,
+                        BudgetLimitSteering::Allowed,
+                        agere_state::ThreadGoalAccountingMode::ActiveOnly,
+                    )
+                    .await?;
                 }
                 Ok(())
             }),
-            GoalRuntimeEvent::ToolCompletedGoal { turn_context } => Box::pin(async move {
+            GoalRuntimeEvent::ToolCompletedGoal {
+                turn_context,
+                accounting_mode,
+            } => Box::pin(async move {
                 self.reset_thread_goal_continuation_suppression();
-                self.account_thread_goal_progress(turn_context, BudgetLimitSteering::Suppressed)
-                    .await?;
+                self.account_thread_goal_progress(
+                    turn_context,
+                    BudgetLimitSteering::Suppressed,
+                    accounting_mode,
+                )
+                .await?;
                 Ok(())
             }),
             GoalRuntimeEvent::TurnFinished {
@@ -328,6 +343,10 @@ impl Session {
             } => Box::pin(async move {
                 self.handle_thread_goal_task_abort(turn_context, reason)
                     .await;
+                Ok(())
+            }),
+            GoalRuntimeEvent::UsageLimitReached { turn_context } => Box::pin(async move {
+                self.usage_limit_active_thread_goal(turn_context).await?;
                 Ok(())
             }),
             GoalRuntimeEvent::ExternalMutationStarting => Box::pin(async move {
@@ -601,7 +620,10 @@ impl Session {
                     self.clear_stopped_thread_goal_runtime_state().await;
                 }
             }
-            agere_state::ThreadGoalStatus::Paused | agere_state::ThreadGoalStatus::Complete => {
+            agere_state::ThreadGoalStatus::Paused
+            | agere_state::ThreadGoalStatus::Blocked
+            | agere_state::ThreadGoalStatus::UsageLimited
+            | agere_state::ThreadGoalStatus::Complete => {
                 self.clear_stopped_thread_goal_runtime_state().await;
             }
         }
@@ -761,7 +783,11 @@ impl Session {
     ) {
         if turn_completed
             && let Err(err) = self
-                .account_thread_goal_progress(turn_context, BudgetLimitSteering::Suppressed)
+                .account_thread_goal_progress(
+                    turn_context,
+                    BudgetLimitSteering::Suppressed,
+                    agere_state::ThreadGoalAccountingMode::ActiveOnly,
+                )
                 .await
         {
             tracing::warn!("failed to account thread goal progress at turn end: {err}");
@@ -797,7 +823,11 @@ impl Session {
             self.take_thread_goal_continuation_turn(&turn_context.sub_id)
                 .await;
             if let Err(err) = self
-                .account_thread_goal_progress(turn_context, BudgetLimitSteering::Suppressed)
+                .account_thread_goal_progress(
+                    turn_context,
+                    BudgetLimitSteering::Suppressed,
+                    agere_state::ThreadGoalAccountingMode::ActiveOrStopped,
+                )
                 .await
             {
                 tracing::warn!("failed to account thread goal progress after abort: {err}");
@@ -823,6 +853,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         budget_limit_steering: BudgetLimitSteering,
+        accounting_mode: agere_state::ThreadGoalAccountingMode,
     ) -> anyhow::Result<()> {
         if !self.enabled(Feature::Goals) {
             return Ok(());
@@ -861,7 +892,7 @@ impl Session {
                 self.conversation_id,
                 time_delta_seconds,
                 token_delta,
-                agere_state::ThreadGoalAccountingMode::ActiveOnly,
+                accounting_mode,
                 expected_goal_id.as_deref(),
             )
             .await?;
@@ -879,6 +910,8 @@ impl Session {
                         matches!(budget_limit_steering, BudgetLimitSteering::Suppressed)
                     }
                     agere_state::ThreadGoalStatus::Paused
+                    | agere_state::ThreadGoalStatus::Blocked
+                    | agere_state::ThreadGoalStatus::UsageLimited
                     | agere_state::ThreadGoalStatus::Complete => true,
                 };
                 {
@@ -937,6 +970,7 @@ impl Session {
                 .account_thread_goal_progress(
                     turn_context.as_ref(),
                     BudgetLimitSteering::Suppressed,
+                    agere_state::ThreadGoalAccountingMode::ActiveOnly,
                 )
                 .await;
         }
@@ -1049,6 +1083,63 @@ impl Session {
                 goal,
             }),
         })
+        .await;
+        Ok(())
+    }
+
+    async fn usage_limit_active_thread_goal(
+        &self,
+        turn_context: &TurnContext,
+    ) -> anyhow::Result<()> {
+        if should_ignore_goal_for_mode(self.collaboration_mode().await.mode) {
+            return Ok(());
+        }
+
+        if !self.enabled(Feature::Goals) {
+            return Ok(());
+        }
+
+        let _continuation_guard = self
+            .goal_runtime
+            .continuation_lock
+            .acquire()
+            .await
+            .context("goal continuation semaphore closed")?;
+        let Some(state_db) = self.state_db_for_thread_goals().await? else {
+            return Ok(());
+        };
+        self.account_thread_goal_wall_clock_usage(
+            &state_db,
+            agere_state::ThreadGoalAccountingMode::ActiveStatusOnly,
+        )
+        .await?;
+        let Some(goal) = state_db
+            .usage_limit_active_thread_goal(self.conversation_id)
+            .await?
+        else {
+            return Ok(());
+        };
+        let goal = protocol_goal_from_state(goal);
+        *self.goal_runtime.budget_limit_reported_goal_id.lock().await = None;
+        {
+            let mut accounting = self.goal_runtime.accounting.lock().await;
+            if let Some(turn) = accounting
+                .turn
+                .as_mut()
+                .filter(|turn| turn.turn_id == turn_context.sub_id)
+            {
+                turn.clear_active_goal();
+            }
+            accounting.wall_clock.clear_active_goal();
+        }
+        self.send_event(
+            turn_context,
+            EventMsg::ThreadGoalUpdated(ThreadGoalUpdatedEvent {
+                thread_id: self.conversation_id,
+                turn_id: Some(turn_context.sub_id.clone()),
+                goal,
+            }),
+        )
         .await;
         Ok(())
     }
@@ -1476,6 +1567,8 @@ pub(crate) fn protocol_goal_status_from_state(
     match status {
         agere_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
         agere_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
+        agere_state::ThreadGoalStatus::Blocked => ThreadGoalStatus::Blocked,
+        agere_state::ThreadGoalStatus::UsageLimited => ThreadGoalStatus::UsageLimited,
         agere_state::ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::BudgetLimited,
         agere_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
     }
@@ -1487,6 +1580,8 @@ pub(crate) fn state_goal_status_from_protocol(
     match status {
         ThreadGoalStatus::Active => agere_state::ThreadGoalStatus::Active,
         ThreadGoalStatus::Paused => agere_state::ThreadGoalStatus::Paused,
+        ThreadGoalStatus::Blocked => agere_state::ThreadGoalStatus::Blocked,
+        ThreadGoalStatus::UsageLimited => agere_state::ThreadGoalStatus::UsageLimited,
         ThreadGoalStatus::BudgetLimited => agere_state::ThreadGoalStatus::BudgetLimited,
         ThreadGoalStatus::Complete => agere_state::ThreadGoalStatus::Complete,
     }

@@ -292,6 +292,54 @@ async fn provider_switch_sequence_updates_context_window_from_new_catalog() {
 }
 
 #[tokio::test]
+async fn provider_switch_sequence_clears_context_window_when_new_model_has_none() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.set_token_info(Some(make_token_info(50_000, 1_000_000)));
+    assert_eq!(
+        chat.status_line_value_for_item(&crate::bottom_pane::StatusLineItem::ContextWindowSize),
+        Some("1M window".to_string())
+    );
+
+    let model = "provider-default-model";
+    let new_catalog = Arc::new(ModelCatalog::new(
+        vec![ModelPreset {
+            id: model.to_string(),
+            model: model.to_string(),
+            display_name: model.to_string(),
+            description: "provider default model".to_string(),
+            default_reasoning_effort: ReasoningEffortConfig::Medium,
+            supported_reasoning_efforts: vec![ReasoningEffortPreset {
+                effort: ReasoningEffortConfig::Medium,
+                description: "medium".to_string(),
+            }],
+            supports_personality: false,
+            additional_speed_tiers: Vec::new(),
+            is_default: true,
+            upgrade: None,
+            show_in_picker: true,
+            availability_nux: None,
+            supported_in_api: true,
+            input_modalities: default_input_modalities(),
+            context_window: None,
+        }],
+        CollaborationModesConfig {
+            default_mode_request_user_input: false,
+        },
+    ));
+
+    chat.set_model(model);
+    chat.set_model_catalog(new_catalog);
+
+    assert_eq!(
+        chat.status_line_value_for_item(&crate::bottom_pane::StatusLineItem::ContextWindowSize),
+        None
+    );
+    assert_eq!(chat.bottom_pane.context_window_percent(), None);
+    assert_eq!(chat.bottom_pane.context_window_used_tokens(), Some(50_000));
+}
+
+#[tokio::test]
 async fn helpers_are_available_and_do_not_panic() {
     let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
     let tx = AppEventSender::new(tx_raw);
@@ -2031,6 +2079,10 @@ fn goal_status_indicator_line_formats_goal_text() {
         (
             GoalStatusIndicator::Paused,
             "Goal paused (/goal to unpause)",
+        ),
+        (
+            GoalStatusIndicator::Blocked,
+            "Goal blocked (/goal to unpause)",
         ),
         (
             GoalStatusIndicator::BudgetLimited { usage: None },

@@ -451,6 +451,8 @@ fn thread_goal_status_to_state(status: ThreadGoalStatus) -> agere_state::ThreadG
     match status {
         ThreadGoalStatus::Active => agere_state::ThreadGoalStatus::Active,
         ThreadGoalStatus::Paused => agere_state::ThreadGoalStatus::Paused,
+        ThreadGoalStatus::Blocked => agere_state::ThreadGoalStatus::Blocked,
+        ThreadGoalStatus::UsageLimited => agere_state::ThreadGoalStatus::UsageLimited,
         ThreadGoalStatus::BudgetLimited => agere_state::ThreadGoalStatus::BudgetLimited,
         ThreadGoalStatus::Complete => agere_state::ThreadGoalStatus::Complete,
     }
@@ -460,6 +462,8 @@ fn thread_goal_status_from_state(status: agere_state::ThreadGoalStatus) -> Threa
     match status {
         agere_state::ThreadGoalStatus::Active => ThreadGoalStatus::Active,
         agere_state::ThreadGoalStatus::Paused => ThreadGoalStatus::Paused,
+        agere_state::ThreadGoalStatus::Blocked => ThreadGoalStatus::Blocked,
+        agere_state::ThreadGoalStatus::UsageLimited => ThreadGoalStatus::UsageLimited,
         agere_state::ThreadGoalStatus::BudgetLimited => ThreadGoalStatus::BudgetLimited,
         agere_state::ThreadGoalStatus::Complete => ThreadGoalStatus::Complete,
     }

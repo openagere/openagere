@@ -694,10 +694,10 @@ fn commands_for_exec_policy(command: &[String]) -> (Vec<Vec<String>>, bool) {
     }
 
     // Parse PowerShell -Command wrapper to extract inner command tokens.
-    if let Some((_, script)) = extract_powershell_command(command) {
-        if let Some(tokens) = shlex_split(script) {
-            return (vec![tokens], false);
-        }
+    if let Some((_, script)) = extract_powershell_command(command)
+        && let Some(tokens) = shlex_split(script)
+    {
+        return (vec![tokens], false);
     }
 
     (vec![command.to_vec()], false)

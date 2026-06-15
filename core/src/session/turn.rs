@@ -21,6 +21,7 @@ use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
 use crate::feedback_tags;
+use crate::goals::GoalRuntimeEvent;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::emit_hook_completed_events;
 use crate::hook_runtime::inspect_pending_input;
@@ -1083,6 +1084,14 @@ async fn run_sampling_request(
                 let rate_limits = e.rate_limits.clone();
                 if let Some(rate_limits) = rate_limits {
                     sess.update_rate_limits(&turn_context, *rate_limits).await;
+                }
+                if let Err(err) = sess
+                    .goal_runtime_apply(GoalRuntimeEvent::UsageLimitReached {
+                        turn_context: turn_context.as_ref(),
+                    })
+                    .await
+                {
+                    warn!("failed to stop active goal after usage-limit error: {err}");
                 }
                 return Err(AgereErr::UsageLimitReached(e));
             }

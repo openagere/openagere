@@ -80,22 +80,18 @@ impl App {
             return;
         }
 
+        let default_model_context_window = entry.models.first().and_then(|m| m.context_window);
         let mut edits = vec![
             ConfigEdit::SetPath {
                 segments: vec!["model_provider".to_string()],
                 value: toml_edit::value(name.clone()),
             },
-            ConfigEdit::SetPath {
-                segments: vec!["model".to_string()],
-                value: toml_edit::value(default_model.clone()),
+            ConfigEdit::SetModel {
+                model: Some(default_model.clone()),
+                effort: None,
+                context_window: default_model_context_window,
             },
         ];
-        if let Some(ctx) = entry.models.first().and_then(|m| m.context_window) {
-            edits.push(ConfigEdit::SetPath {
-                segments: vec!["model_context_window".to_string()],
-                value: toml_edit::value(ctx),
-            });
-        }
         edits.push(ConfigEdit::SetPath {
             segments: vec!["model_reasoning_effort".to_string()],
             value: toml_edit::value(

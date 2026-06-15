@@ -7497,6 +7497,7 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
     .await;
     sess.goal_runtime_apply(GoalRuntimeEvent::ToolCompletedGoal {
         turn_context: tc.as_ref(),
+        accounting_mode: agere_state::ThreadGoalAccountingMode::ActiveOrComplete,
     })
     .await?;
 
@@ -7627,6 +7628,42 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
     assert_eq!(25, goal.tokens_used);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn usage_limit_runtime_event_stops_active_goal() -> anyhow::Result<()> {
+    let (sess, tc, rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep improving the benchmark".to_string()),
+            status: None,
+            token_budget: None,
+        },
+    )
+    .await?;
+    while rx.try_recv().is_ok() {}
+
+    sess.goal_runtime_apply(GoalRuntimeEvent::UsageLimitReached {
+        turn_context: tc.as_ref(),
+    })
+    .await?;
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should remain persisted");
+    assert_eq!(agere_state::ThreadGoalStatus::UsageLimited, goal.status);
+
+    let event = rx.recv().await?;
+    let EventMsg::ThreadGoalUpdated(update) = event.msg else {
+        panic!("expected goal update event, got {event:#?}");
+    };
+    assert_eq!(ThreadGoalStatus::UsageLimited, update.goal.status);
+    assert_eq!(Some(tc.sub_id.clone()), update.turn_id);
 
     Ok(())
 }
@@ -8420,7 +8457,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
     };
     assert_eq!(
         output,
-        "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
+        "update_goal can only mark the existing goal complete or blocked; pause, resume, budget-limited, and usage-limited status changes are controlled by the user or system"
     );
 
     let goal = session
@@ -8482,6 +8519,71 @@ async fn update_goal_tool_marks_goal_complete() {
         .expect("read thread goal")
         .expect("goal should still exist");
     assert_eq!(goal.status, ThreadGoalStatus::Complete);
+}
+
+#[tokio::test]
+async fn update_goal_tool_blocked_preserves_budget_limited_goal() {
+    let (session, turn_context, _rx) = make_goal_session_and_context_with_rx().await;
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let handler = GoalHandler;
+
+    handler
+        .handle(ToolInvocation {
+            session: Arc::clone(&session),
+            turn: Arc::clone(&turn_context),
+            cancellation_token: CancellationToken::new(),
+            tracker: Arc::clone(&tracker),
+            call_id: "create-goal".to_string(),
+            tool_name: agere_tools::ToolName::plain("create_goal"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "objective": "Keep the watcher alive",
+                    "token_budget": 10,
+                })
+                .to_string(),
+            },
+        })
+        .await
+        .expect("initial create_goal should succeed");
+    set_total_token_usage(
+        &session,
+        TokenUsage {
+            input_tokens: 20,
+            cached_input_tokens: 0,
+            output_tokens: 5,
+            reasoning_output_tokens: 0,
+            total_tokens: 25,
+        },
+    )
+    .await;
+
+    handler
+        .handle(ToolInvocation {
+            session: Arc::clone(&session),
+            turn: Arc::clone(&turn_context),
+            cancellation_token: CancellationToken::new(),
+            tracker,
+            call_id: "blocked-goal".to_string(),
+            tool_name: agere_tools::ToolName::plain("update_goal"),
+            source: ToolCallSource::Direct,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "status": "blocked",
+                })
+                .to_string(),
+            },
+        })
+        .await
+        .expect("update_goal blocked should succeed");
+
+    let goal = session
+        .get_thread_goal()
+        .await
+        .expect("read thread goal")
+        .expect("goal should still exist");
+    assert_eq!(goal.status, ThreadGoalStatus::BudgetLimited);
+    assert_eq!(goal.tokens_used, 25);
 }
 
 #[tokio::test]

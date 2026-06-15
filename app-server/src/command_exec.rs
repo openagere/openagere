@@ -622,14 +622,11 @@ fn command_no_longer_running_error(process_id: &InternalProcessId) -> JSONRPCErr
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
 
     use crate::error_code::INVALID_REQUEST_ERROR_CODE;
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::outgoing_message::OutgoingEnvelope;
-    use crate::outgoing_message::OutgoingMessage;
 
     #[tokio::test]
     async fn dropped_control_request_is_reported_as_not_running() {

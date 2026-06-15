@@ -1057,7 +1057,7 @@ mod tests {
     use agere_login::AuthDotJson;
     use agere_login::save_auth;
     use agere_state::StateRuntime;
-    use chrono::Utc;
+
     use futures::StreamExt;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;

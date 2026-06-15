@@ -101,6 +101,8 @@ pub(crate) enum CollaborationModeIndicator {
 pub(crate) enum GoalStatusIndicator {
     Active { usage: Option<String> },
     Paused,
+    Blocked,
+    UsageLimited,
     BudgetLimited { usage: Option<String> },
     Complete { usage: Option<String> },
 }
@@ -550,6 +552,8 @@ pub(crate) fn goal_status_indicator_line(
             }
         }
         GoalStatusIndicator::Paused => "Goal paused (/goal to unpause)".to_string(),
+        GoalStatusIndicator::Blocked => "Goal blocked (/goal to unpause)".to_string(),
+        GoalStatusIndicator::UsageLimited => "Goal limited by usage".to_string(),
         GoalStatusIndicator::BudgetLimited { usage } => {
             if let Some(usage) = usage {
                 format!("Goal unmet ({usage})")
