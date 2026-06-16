@@ -2373,17 +2373,27 @@ impl ChatComposer {
         };
 
         let prefix_str = prefix.to_string();
-        let left_match = token_left.filter(|t| t.starts_with(prefix));
-        let right_match = token_right.filter(|t| t.starts_with(prefix));
-
-        let left_prefixed = left_match.map(|t| t[prefix.len_utf8()..].to_string());
-        let right_prefixed = right_match.map(|t| t[prefix.len_utf8()..].to_string());
+        let intersects_text_element = |range: Range<usize>| {
+            textarea.text_elements().iter().any(|element| {
+                element.byte_range.start < range.end && element.byte_range.end > range.start
+            })
+        };
+        let left_prefixed = token_left
+            .filter(|token| token.starts_with(prefix))
+            .filter(|_| !intersects_text_element(start_left..end_left))
+            .map(|token| token[prefix.len_utf8()..].to_string());
+        let right_prefixed = token_right
+            .filter(|token| token.starts_with(prefix))
+            .filter(|_| !intersects_text_element(start_right..end_right))
+            .map(|token| token[prefix.len_utf8()..].to_string());
 
         if at_whitespace {
             if right_prefixed.is_some() {
                 return right_prefixed;
             }
-            if token_left.is_some_and(|t| t == prefix_str) {
+            if token_left.is_some_and(|t| t == prefix_str)
+                && !intersects_text_element(start_left..end_left)
+            {
                 return allow_empty.then(String::new);
             }
             return left_prefixed;
@@ -6359,6 +6369,22 @@ mod tests {
                 "Failed for cursor position case: {description} - input: '{input}', cursor: {cursor_pos}",
             );
         }
+    }
+
+    #[test]
+    fn current_prefixed_token_ignores_text_elements() {
+        let mut textarea = TextArea::new();
+        let placeholder = "[Image #2]";
+        textarea.set_text_with_elements(
+            placeholder,
+            &[TextElement::new(
+                (0..placeholder.len()).into(),
+                Some(placeholder.to_string()),
+            )],
+        );
+        textarea.set_cursor(placeholder.find('#').expect("hash in placeholder"));
+
+        assert_eq!(ChatComposer::current_hash_token(&textarea), None);
     }
 
     #[test]

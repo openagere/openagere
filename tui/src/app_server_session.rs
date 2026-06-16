@@ -19,6 +19,14 @@ use agere_app_server_protocol::ExternalAgentConfigDetectResponse;
 use agere_app_server_protocol::ExternalAgentConfigImportParams;
 use agere_app_server_protocol::ExternalAgentConfigImportResponse;
 use agere_app_server_protocol::ExternalAgentConfigMigrationItem;
+use agere_app_server_protocol::FsCreateDirectoryParams;
+use agere_app_server_protocol::FsCreateDirectoryResponse;
+use agere_app_server_protocol::FsReadFileParams;
+use agere_app_server_protocol::FsReadFileResponse;
+use agere_app_server_protocol::FsRemoveParams;
+use agere_app_server_protocol::FsRemoveResponse;
+use agere_app_server_protocol::FsWriteFileParams;
+use agere_app_server_protocol::FsWriteFileResponse;
 use agere_app_server_protocol::GetAccountParams;
 use agere_app_server_protocol::GetAccountRateLimitsResponse;
 use agere_app_server_protocol::GetAccountResponse;
@@ -111,6 +119,8 @@ use agere_protocol::protocol::ReviewRequest;
 use agere_protocol::protocol::ReviewTarget as CoreReviewTarget;
 use agere_protocol::protocol::SessionNetworkProxyRuntime;
 use agere_utils_fs::AbsolutePathBuf;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use color_eyre::eyre::ContextCompat;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
@@ -813,6 +823,77 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/goal/clear failed in TUI")
+    }
+
+    pub(crate) async fn fs_read_file_path(&mut self, path: &AbsolutePathBuf) -> Result<Vec<u8>> {
+        let request_id = self.next_request_id();
+        let response: FsReadFileResponse = self
+            .client
+            .request_typed(ClientRequest::FsReadFile {
+                request_id,
+                params: FsReadFileParams { path: path.clone() },
+            })
+            .await
+            .wrap_err("fs/readFile failed in TUI")?;
+        BASE64_STANDARD
+            .decode(response.data_base64)
+            .wrap_err("fs/readFile returned invalid base64 data")
+    }
+
+    pub(crate) async fn fs_write_file_path(
+        &mut self,
+        path: &AbsolutePathBuf,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: FsWriteFileResponse = self
+            .client
+            .request_typed(ClientRequest::FsWriteFile {
+                request_id,
+                params: FsWriteFileParams {
+                    path: path.clone(),
+                    data_base64: BASE64_STANDARD.encode(bytes),
+                },
+            })
+            .await
+            .wrap_err("fs/writeFile failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn fs_create_directory_all_path(
+        &mut self,
+        path: &AbsolutePathBuf,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: FsCreateDirectoryResponse = self
+            .client
+            .request_typed(ClientRequest::FsCreateDirectory {
+                request_id,
+                params: FsCreateDirectoryParams {
+                    path: path.clone(),
+                    recursive: Some(true),
+                },
+            })
+            .await
+            .wrap_err("fs/createDirectory failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn fs_remove_path(&mut self, path: &AbsolutePathBuf) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: FsRemoveResponse = self
+            .client
+            .request_typed(ClientRequest::FsRemove {
+                request_id,
+                params: FsRemoveParams {
+                    path: path.clone(),
+                    recursive: Some(true),
+                    force: Some(true),
+                },
+            })
+            .await
+            .wrap_err("fs/remove failed in TUI")?;
+        Ok(())
     }
 
     pub(crate) async fn logout_account(&mut self) -> Result<()> {

@@ -695,16 +695,16 @@ async fn goal_slash_command_emits_set_goal_event() {
     submit_composer_text(&mut chat, command);
 
     let event = rx.try_recv().expect("expected goal objective event");
-    let AppEvent::SetThreadGoalObjective {
+    let AppEvent::SetThreadGoalDraft {
         thread_id: actual_thread_id,
-        objective,
+        draft,
         mode,
     } = event
     else {
-        panic!("expected SetThreadGoalObjective, got {event:?}");
+        panic!("expected SetThreadGoalDraft, got {event:?}");
     };
     assert_eq!(actual_thread_id, thread_id);
-    assert_eq!(objective, "--tokens 98.5K improve benchmark coverage");
+    assert_eq!(draft.objective, "--tokens 98.5K improve benchmark coverage");
     assert_eq!(mode, crate::app_event::ThreadGoalSetMode::ConfirmIfExists);
     assert_no_submit_op(&mut op_rx);
     assert_eq!(recall_latest_after_clearing(&mut chat), command);
@@ -731,21 +731,21 @@ async fn goal_slash_command_uses_plain_text_for_mentions() {
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     let event = rx.try_recv().expect("expected goal objective event");
-    let AppEvent::SetThreadGoalObjective {
+    let AppEvent::SetThreadGoalDraft {
         thread_id: actual_thread_id,
-        objective,
+        draft,
         ..
     } = event
     else {
-        panic!("expected SetThreadGoalObjective, got {event:?}");
+        panic!("expected SetThreadGoalDraft, got {event:?}");
     };
     assert_eq!(actual_thread_id, thread_id);
-    assert_eq!(objective, "use $figma for the mockup");
+    assert_eq!(draft.objective, "use $figma for the mockup");
     assert_no_submit_op(&mut op_rx);
 }
 
 #[tokio::test]
-async fn goal_slash_command_drops_attached_images() {
+async fn goal_slash_command_preserves_attached_images() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
     let thread_id = ThreadId::new();
@@ -755,29 +755,33 @@ async fn goal_slash_command_drops_attached_images() {
     let placeholder = "[Image #2]";
     let command = format!("/goal describe {placeholder}");
     let placeholder_start = command.find(placeholder).expect("placeholder in command");
-    chat.set_remote_image_urls(vec![remote_url]);
+    chat.set_remote_image_urls(vec![remote_url.clone()]);
     chat.bottom_pane.set_composer_text(
         command,
         vec![TextElement::new(
             (placeholder_start..placeholder_start + placeholder.len()).into(),
             Some(placeholder.to_string()),
         )],
-        vec![local_image],
+        vec![local_image.clone()],
     );
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     let event = rx.try_recv().expect("expected goal objective event");
-    let AppEvent::SetThreadGoalObjective {
+    let AppEvent::SetThreadGoalDraft {
         thread_id: actual_thread_id,
-        objective,
+        draft,
         ..
     } = event
     else {
-        panic!("expected SetThreadGoalObjective, got {event:?}");
+        panic!("expected SetThreadGoalDraft, got {event:?}");
     };
     assert_eq!(actual_thread_id, thread_id);
-    assert_eq!(objective, "describe [Image #2]");
+    assert_eq!(draft.objective, "describe [Image #2]");
+    assert_eq!(draft.remote_image_urls, vec![remote_url]);
+    assert_eq!(draft.local_images.len(), 1);
+    assert_eq!(draft.local_images[0].path, local_image);
+    assert_eq!(draft.local_images[0].placeholder, placeholder);
     assert!(chat.remote_image_urls().is_empty());
     assert!(chat.bottom_pane.composer_local_image_paths().is_empty());
     assert_no_submit_op(&mut op_rx);
@@ -884,16 +888,52 @@ async fn queued_goal_slash_command_emits_set_goal_event_after_thread_starts() {
     chat.maybe_send_next_queued_input();
 
     let event = rx.try_recv().expect("expected goal objective event");
-    let AppEvent::SetThreadGoalObjective {
+    let AppEvent::SetThreadGoalDraft {
         thread_id: actual_thread_id,
-        objective,
+        draft,
         ..
     } = event
     else {
-        panic!("expected SetThreadGoalObjective, got {event:?}");
+        panic!("expected SetThreadGoalDraft, got {event:?}");
     };
     assert_eq!(actual_thread_id, thread_id);
-    assert_eq!(objective, "improve benchmark coverage");
+    assert_eq!(draft.objective, "improve benchmark coverage");
+    assert_no_submit_op(&mut op_rx);
+}
+
+#[tokio::test]
+async fn queued_goal_slash_command_preserves_large_paste() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    let paste = "x".repeat(agere_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS + 1);
+
+    chat.bottom_pane
+        .set_composer_text("/goal ".to_string(), Vec::new(), Vec::new());
+    chat.handle_paste(paste.clone());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_eq!(chat.queued_user_messages.len(), 1);
+    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
+
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.maybe_send_next_queued_input();
+
+    let event = rx.try_recv().expect("expected goal objective event");
+    let AppEvent::SetThreadGoalDraft {
+        thread_id: actual_thread_id,
+        draft,
+        ..
+    } = event
+    else {
+        panic!("expected SetThreadGoalDraft, got {event:?}");
+    };
+    assert_eq!(actual_thread_id, thread_id);
+    assert_eq!(draft.pending_pastes.len(), 1);
+    assert_eq!(draft.pending_pastes[0].1, paste);
+    assert!(draft.objective.contains(&draft.pending_pastes[0].0));
     assert_no_submit_op(&mut op_rx);
 }
 
@@ -928,7 +968,7 @@ async fn queued_goal_slash_command_preserves_current_draft_metadata() {
     let event = rx.try_recv().expect("expected goal objective event");
     assert_matches!(
         event,
-        AppEvent::SetThreadGoalObjective {
+        AppEvent::SetThreadGoalDraft {
             thread_id: actual_thread_id,
             ..
         } if actual_thread_id == thread_id
@@ -966,7 +1006,7 @@ async fn restored_queued_goal_slash_command_emits_set_goal_event() {
         .expect("expected goal objective event");
     assert_matches!(
         event,
-        AppEvent::SetThreadGoalObjective {
+        AppEvent::SetThreadGoalDraft {
             thread_id: actual_thread_id,
             ..
         } if actual_thread_id == thread_id
@@ -2184,7 +2224,14 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
     chat.dispatch_command(SlashCommand::Fast);
     let _events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
 
-    chat.dispatch_command_with_args(SlashCommand::Fast, "off".to_string(), Vec::new());
+    chat.dispatch_command_with_args(
+        SlashCommand::Fast,
+        "off".to_string(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
         events.iter().any(|event| matches!(

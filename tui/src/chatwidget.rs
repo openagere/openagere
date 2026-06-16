@@ -232,7 +232,6 @@ use agere_protocol::protocol::WebSearchEndEvent;
 use agere_protocol::request_permissions::RequestPermissionsEvent;
 use agere_protocol::request_user_input::RequestUserInputEvent;
 use agere_protocol::request_user_input::RequestUserInputQuestionOption;
-use agere_protocol::user_input::ByteRange;
 use agere_protocol::user_input::TextElement;
 use agere_protocol::user_input::UserInput;
 use agere_utils_fs::AbsolutePathBuf;
@@ -1160,13 +1159,23 @@ enum ShellEscapePolicy {
 struct QueuedUserMessage {
     user_message: UserMessage,
     action: QueuedInputAction,
+    pending_pastes: Vec<(String, String)>,
 }
 
 impl QueuedUserMessage {
     fn new(user_message: UserMessage, action: QueuedInputAction) -> Self {
+        Self::new_with_pending_pastes(user_message, action, Vec::new())
+    }
+
+    fn new_with_pending_pastes(
+        user_message: UserMessage,
+        action: QueuedInputAction,
+        pending_pastes: Vec<(String, String)>,
+    ) -> Self {
         Self {
             user_message,
             action,
+            pending_pastes,
         }
     }
 
@@ -5977,13 +5986,24 @@ impl ChatWidget {
                                 .bottom_pane
                                 .take_recent_submission_mention_bindings(),
                         };
-                        self.queue_user_message_with_options(user_message, action);
+                        let pending_pastes = self.bottom_pane.composer_pending_pastes();
+                        self.queue_user_message_with_options(user_message, action, pending_pastes);
                     }
                     InputResult::Command(cmd) => {
                         self.handle_slash_command_dispatch(cmd);
                     }
                     InputResult::CommandWithArgs(cmd, args, text_elements) => {
-                        self.handle_slash_command_with_args_dispatch(cmd, args, text_elements);
+                        let pending_pastes = self.bottom_pane.composer_pending_pastes();
+                        let local_images = self.bottom_pane.composer_local_images();
+                        let remote_image_urls = self.bottom_pane.remote_image_urls();
+                        self.handle_slash_command_with_args_dispatch(
+                            cmd,
+                            args,
+                            text_elements,
+                            pending_pastes,
+                            local_images,
+                            remote_image_urls,
+                        );
                     }
                     InputResult::None => {}
                 }
@@ -6211,17 +6231,22 @@ impl ChatWidget {
     }
 
     fn queue_user_message(&mut self, user_message: UserMessage) {
-        self.queue_user_message_with_options(user_message, QueuedInputAction::Plain);
+        self.queue_user_message_with_options(user_message, QueuedInputAction::Plain, Vec::new());
     }
 
     fn queue_user_message_with_options(
         &mut self,
         user_message: UserMessage,
         action: QueuedInputAction,
+        pending_pastes: Vec<(String, String)>,
     ) {
         if !self.is_session_configured() || self.is_user_turn_pending_or_running() {
             self.queued_user_messages
-                .push_back(QueuedUserMessage::new(user_message, action));
+                .push_back(QueuedUserMessage::new_with_pending_pastes(
+                    user_message,
+                    action,
+                    pending_pastes,
+                ));
             self.queued_user_message_history_records
                 .push_back(UserMessageHistoryRecord::UserMessageText);
             self.refresh_pending_input_preview();
@@ -8183,7 +8208,7 @@ impl ChatWidget {
                     break;
                 }
                 QueuedInputAction::ParseSlash => {
-                    let drain = self.submit_queued_slash_prompt(queued_message.into_user_message());
+                    let drain = self.submit_queued_slash_prompt(queued_message);
                     if drain == QueueDrain::Stop {
                         submitted_follow_up = self.is_user_turn_pending_or_running();
                         break;

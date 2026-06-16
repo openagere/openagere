@@ -39,6 +39,7 @@ use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
 use crate::external_rg::RgMatch;
+use crate::goal_files::GoalDraft;
 use agere_config::types::ApprovalsReviewer;
 use agere_features::Feature;
 use agere_plugin::PluginCapabilitySummary;
@@ -238,10 +239,10 @@ pub(crate) enum AppEvent {
         thread_id: Option<ThreadId>,
     },
 
-    /// Set or replace the current thread goal objective.
-    SetThreadGoalObjective {
+    /// Set or replace the current thread goal draft.
+    SetThreadGoalDraft {
         thread_id: ThreadId,
-        objective: String,
+        draft: GoalDraft,
         mode: ThreadGoalSetMode,
     },
 

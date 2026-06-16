@@ -34,7 +34,10 @@ pub fn rollout_item_affects_thread_metadata(item: &RolloutItem) -> bool {
     match item {
         RolloutItem::SessionMeta(_) | RolloutItem::TurnContext(_) => true,
         RolloutItem::EventMsg(
-            EventMsg::TokenCount(_) | EventMsg::UserMessage(_) | EventMsg::ThreadNameUpdated(_),
+            EventMsg::TokenCount(_)
+            | EventMsg::UserMessage(_)
+            | EventMsg::ThreadGoalUpdated(_)
+            | EventMsg::ThreadNameUpdated(_),
         ) => true,
         RolloutItem::EventMsg(_) | RolloutItem::ResponseItem(_) | RolloutItem::Compacted(_) => {
             false
@@ -308,6 +311,7 @@ mod tests {
 
         apply_rollout_item(&mut metadata, &goal_item, "test-provider");
 
+        assert!(super::rollout_item_affects_thread_metadata(&goal_item));
         assert_eq!(metadata.preview.as_deref(), Some("optimize the benchmark"));
         assert_eq!(metadata.first_user_message, None);
         assert_eq!(metadata.title, "");

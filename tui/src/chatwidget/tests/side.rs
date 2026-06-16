@@ -87,7 +87,14 @@ async fn slash_rename_with_args_is_rejected_for_side_threads() {
         "Side conversations are ephemeral and cannot be renamed.".to_string(),
     );
 
-    chat.dispatch_command_with_args(SlashCommand::Rename, "investigate".to_string(), Vec::new());
+    chat.dispatch_command_with_args(
+        SlashCommand::Rename,
+        "investigate".to_string(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     assert_side_rename_rejected(&mut rx, &mut op_rx);
 }
 

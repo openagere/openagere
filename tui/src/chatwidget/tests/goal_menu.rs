@@ -84,17 +84,17 @@ async fn goal_edit_prompt_updates_existing_goal() {
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     let event = rx.try_recv().expect("expected goal update event");
-    let AppEvent::SetThreadGoalObjective {
+    let AppEvent::SetThreadGoalDraft {
         thread_id: actual_thread_id,
-        objective,
+        draft,
         mode,
     } = event
     else {
-        panic!("expected SetThreadGoalObjective, got {event:?}");
+        panic!("expected SetThreadGoalDraft, got {event:?}");
     };
     assert_eq!(actual_thread_id, thread_id);
     assert_eq!(
-        objective,
+        draft.objective,
         "Keep improving the bare goal command until it feels calm and useful."
     );
     assert_eq!(
@@ -122,7 +122,7 @@ async fn goal_edit_prompt_reactivates_complete_goal() {
     let event = rx.try_recv().expect("expected goal update event");
     assert_matches!(
         event,
-        AppEvent::SetThreadGoalObjective {
+        AppEvent::SetThreadGoalDraft {
             thread_id: actual_thread_id,
             mode:
                 crate::app_event::ThreadGoalSetMode::UpdateExisting {
