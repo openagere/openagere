@@ -15,6 +15,11 @@ use agere_app_server_protocol::ThreadGoal;
 use agere_app_server_protocol::ThreadGoalStatus;
 use agere_protocol::ThreadId;
 
+const EPHEMERAL_THREAD_GOAL_ERROR_MESSAGE: &str = concat!(
+    "Goals need a saved session. This session is temporary.\n",
+    "Run `openagere` to start a saved session, or `openagere resume` / `/resume` to reopen one.",
+);
+
 impl App {
     pub(super) async fn open_thread_goal_menu(
         &mut self,
@@ -30,7 +35,7 @@ impl App {
             Ok(response) => response,
             Err(err) => {
                 self.chat_widget
-                    .add_error_message(format!("Failed to read thread goal: {err}"));
+                    .add_error_message(thread_goal_error_message("read", &err));
                 return;
             }
         };
@@ -65,7 +70,7 @@ impl App {
             Ok(response) => response,
             Err(err) => {
                 self.chat_widget
-                    .add_error_message(format!("Failed to read thread goal: {err}"));
+                    .add_error_message(thread_goal_error_message("read", &err));
                 return;
             }
         };
@@ -115,7 +120,7 @@ impl App {
                 },
                 Err(err) => {
                     self.chat_widget
-                        .add_error_message(format!("Failed to read thread goal: {err}"));
+                        .add_error_message(thread_goal_error_message("read", &err));
                     return;
                 }
             }
@@ -176,7 +181,7 @@ impl App {
                 let replacing_goal = mode == ThreadGoalSetMode::ReplaceExisting;
                 let action = if replacing_goal { "replace" } else { "set" };
                 self.chat_widget
-                    .add_error_message(format!("Failed to {action} thread goal: {err}"));
+                    .add_error_message(thread_goal_error_message(action, &err));
             }
         }
     }
@@ -206,7 +211,7 @@ impl App {
             ),
             Err(err) => self
                 .chat_widget
-                .add_error_message(format!("Failed to update thread goal: {err}")),
+                .add_error_message(thread_goal_error_message("update", &err)),
         }
     }
 
@@ -234,7 +239,7 @@ impl App {
             }
             Err(err) => self
                 .chat_widget
-                .add_error_message(format!("Failed to clear thread goal: {err}")),
+                .add_error_message(thread_goal_error_message("clear", &err)),
         }
     }
 
@@ -289,6 +294,22 @@ impl App {
     }
 }
 
+fn thread_goal_error_message(action: &str, err: &color_eyre::Report) -> String {
+    if is_ephemeral_thread_goal_error(err) {
+        EPHEMERAL_THREAD_GOAL_ERROR_MESSAGE.to_string()
+    } else {
+        format!("Failed to {action} thread goal: {err}")
+    }
+}
+
+fn is_ephemeral_thread_goal_error(err: &color_eyre::Report) -> bool {
+    err.chain().any(|cause| {
+        let message = cause.to_string();
+        message.contains("ephemeral thread does not support goals")
+            || message.contains("thread goals require a persisted thread; this thread is ephemeral")
+    })
+}
+
 async fn cleanup_materialized_goal_files(
     app_server: &mut AppServerSession,
     output_dir: Option<goal_files::GoalFilePath>,
@@ -335,6 +356,56 @@ fn confirmed_goal_set_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history_cell::HistoryCell;
+    use pretty_assertions::assert_eq;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn thread_goal_error_message_explains_temporary_session() {
+        let err = color_eyre::eyre::eyre!(
+            "thread/goal/get failed: ephemeral thread does not support goals: thread-1"
+        )
+        .wrap_err("thread/goal/get failed in TUI");
+
+        assert_eq!(
+            thread_goal_error_message("read", &err),
+            EPHEMERAL_THREAD_GOAL_ERROR_MESSAGE
+        );
+    }
+
+    #[test]
+    fn thread_goal_ephemeral_error_message_renders_snapshot() {
+        let err = color_eyre::eyre::eyre!(
+            "thread/goal/get failed: ephemeral thread does not support goals: thread-1"
+        )
+        .wrap_err("thread/goal/get failed in TUI");
+        let cell = crate::history_cell::new_error_event(thread_goal_error_message("read", &err));
+        let width = 72;
+        let height = 6;
+        let backend = crate::test_backend::VT100Backend::new(width, height);
+        let mut terminal =
+            crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, height - 1, width, 1));
+
+        crate::insert_history::insert_history_lines(
+            &mut terminal,
+            cell.display_lines(/*width*/ width),
+        )
+        .expect("insert history lines");
+
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn thread_goal_error_message_preserves_generic_failure_context() {
+        let err =
+            color_eyre::eyre::eyre!("server disappeared").wrap_err("thread/goal/get failed in TUI");
+
+        assert_eq!(
+            thread_goal_error_message("read", &err),
+            "Failed to read thread goal: thread/goal/get failed in TUI"
+        );
+    }
 
     #[test]
     fn completed_goal_does_not_require_replace_confirmation() {
