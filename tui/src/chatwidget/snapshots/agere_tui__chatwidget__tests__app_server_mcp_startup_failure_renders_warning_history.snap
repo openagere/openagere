@@ -8,7 +8,7 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
 ⚠ MCP client for `alpha` failed to start: handshake failed
 ⚠ MCP startup incomplete (failed: alpha)
 
-
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 › Ask Agere to do anything
-
-  gpt-5.5 default · /tmp/project
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  gpt-5.5 none · Context 100% left · /tmp/project

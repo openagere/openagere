@@ -400,6 +400,8 @@ use self::skills::find_app_mentions;
 use self::skills::find_skill_mentions_with_tool_mentions;
 mod plugins;
 use self::plugins::PluginsCacheState;
+mod rate_limit_wait;
+use self::rate_limit_wait::RateLimitWaitState;
 mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod realtime;
@@ -936,6 +938,9 @@ pub(crate) struct ChatWidget {
     retry_status_header: Option<String>,
     // Set when commentary output completes; once stream queues go idle we restore the status row.
     pending_status_indicator_restore: bool,
+    // Active rate-limit retry sleep, if any. Drives the live countdown shown
+    // by `pre_draw_tick`.
+    rate_limit_wait: Option<RateLimitWaitState>,
     suppress_queue_autosend: bool,
     thread_id: Option<ThreadId>,
     /// Nudge dismissals that should survive draft edits within the current thread scope.
@@ -2306,6 +2311,7 @@ impl ChatWidget {
     }
 
     fn restore_retry_status_header_if_present(&mut self) {
+        self.rate_limit_wait = None;
         if let Some(header) = self.retry_status_header.take() {
             self.set_status_header(header);
         }
@@ -4980,12 +4986,56 @@ impl ChatWidget {
         );
     }
 
+    fn on_rate_limit_waiting(&mut self, event: agere_protocol::protocol::RateLimitWaitingEvent) {
+        if self.retry_status_header.is_none() {
+            self.retry_status_header = Some(self.current_status.header.clone());
+        }
+        let state = RateLimitWaitState::from_event(event);
+        let now = chrono::Utc::now().timestamp();
+        let header = state.header(now);
+        let details = state.details();
+        self.rate_limit_wait = Some(state);
+        self.bottom_pane.ensure_status_indicator();
+        self.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
+        self.set_status(
+            header,
+            details,
+            StatusDetailsCapitalization::Preserve,
+            STATUS_DETAILS_DEFAULT_MAX_LINES,
+        );
+    }
+
+    fn refresh_rate_limit_wait_status(&mut self) {
+        let Some(state) = self.rate_limit_wait.clone() else {
+            return;
+        };
+        let now = chrono::Utc::now().timestamp();
+        let remaining = state.remaining_seconds(now);
+        if remaining == 0 {
+            // The retry should fire any moment. Restore the status that was
+            // visible before the countdown so the UI does not freeze on an
+            // expired "retrying in 0s/1s" message while the next request
+            // connects.
+            self.restore_retry_status_header_if_present();
+            return;
+        }
+        let header = state.header(now);
+        let details = state.details();
+        self.set_status(
+            header,
+            details,
+            StatusDetailsCapitalization::Preserve,
+            STATUS_DETAILS_DEFAULT_MAX_LINES,
+        );
+    }
+
     pub(crate) fn pre_draw_tick(&mut self) {
         self.update_due_hook_visibility();
         self.schedule_hook_timer_if_needed();
         self.bottom_pane.pre_draw_tick();
         self.refresh_plan_mode_nudge();
         self.refresh_goal_status_indicator_for_time_tick();
+        self.refresh_rate_limit_wait_status();
         if self.terminal_title_shows_action_required() != self.last_terminal_title_requires_action {
             self.refresh_terminal_title();
         }
@@ -5679,6 +5729,7 @@ impl ChatWidget {
             terminal_title_status_kind: TerminalTitleStatusKind::Working,
             retry_status_header: None,
             pending_status_indicator_restore: false,
+            rate_limit_wait: None,
             suppress_queue_autosend: false,
             thread_id: None,
             dismissed_plan_mode_nudge_scopes: HashSet::new(),
@@ -7112,7 +7163,9 @@ impl ChatWidget {
                 ..
             })
         );
-        if !is_resume_initial_replay && !is_retry_error {
+        let is_rate_limit_waiting =
+            matches!(&notification, ServerNotification::ThreadRateLimitWaiting(_));
+        if !is_resume_initial_replay && !is_retry_error && !is_rate_limit_waiting {
             self.restore_retry_status_header_if_present();
         }
         match notification {
@@ -7234,6 +7287,17 @@ impl ChatWidget {
                         notification.error.message,
                         notification.error.agere_error_info,
                     );
+                }
+            }
+            ServerNotification::ThreadRateLimitWaiting(notification) => {
+                if !is_resume_initial_replay {
+                    self.on_rate_limit_waiting(agere_protocol::protocol::RateLimitWaitingEvent {
+                        attempt: notification.attempt,
+                        max_attempts: notification.max_attempts,
+                        resume_at_unix_seconds: notification.resume_at,
+                        wait_seconds: notification.wait_seconds,
+                        reason: notification.reason,
+                    });
                 }
             }
             ServerNotification::SkillsChanged(_) => {
@@ -7676,7 +7740,8 @@ impl ChatWidget {
         let is_resume_initial_replay =
             matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages));
         let is_stream_error = matches!(&msg, EventMsg::StreamError(_));
-        if !is_resume_initial_replay && !is_stream_error {
+        let is_rate_limit_waiting = matches!(&msg, EventMsg::RateLimitWaiting(_));
+        if !is_resume_initial_replay && !is_stream_error && !is_rate_limit_waiting {
             self.restore_retry_status_header_if_present();
         }
 
@@ -7902,6 +7967,11 @@ impl ChatWidget {
             }) => {
                 if !is_resume_initial_replay {
                     self.on_stream_error(message, additional_details);
+                }
+            }
+            EventMsg::RateLimitWaiting(event) => {
+                if !is_resume_initial_replay {
+                    self.on_rate_limit_waiting(event);
                 }
             }
             EventMsg::UserMessage(ev) => {
@@ -11923,8 +11993,24 @@ impl ChatWidget {
         }
 
         match result {
-            Ok(snapshot) => {
-                // Connectors removed; skip merge/enabled-state processing
+            Ok(mut snapshot) => {
+                if let ConnectorsCacheState::Ready(existing_snapshot) = &self.connectors_cache {
+                    let enabled_by_id: HashMap<&str, bool> = existing_snapshot
+                        .connectors
+                        .iter()
+                        .map(|connector| (connector.id.as_str(), connector.is_enabled))
+                        .collect();
+                    for connector in &mut snapshot.connectors {
+                        if let Some(is_enabled) = enabled_by_id.get(connector.id.as_str()) {
+                            connector.is_enabled = *is_enabled;
+                        }
+                    }
+                } else {
+                    snapshot.connectors = crate::legacy_core::connectors::with_app_enabled_state(
+                        snapshot.connectors,
+                        &self.config,
+                    );
+                }
                 if is_final {
                     self.connectors_partial_snapshot = None;
                     self.refresh_connectors_popup_if_open(&snapshot.connectors);

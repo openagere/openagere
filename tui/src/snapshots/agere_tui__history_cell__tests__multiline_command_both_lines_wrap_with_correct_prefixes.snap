@@ -2,9 +2,10 @@
 source: tui/src/history_cell.rs
 expression: rendered
 ---
-• Bash(first_token_is_long
-        _enough_to_wrap
-        second_token_is_al
-        so_long_enough_to_
-        wrap)
+•
+        Bash(first_token_is_
+        long_enough_to_wrap
+        second_token_is_also
+        _long_enough_to_wrap
+        )
   └ (no output)

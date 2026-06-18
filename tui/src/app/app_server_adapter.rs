@@ -82,6 +82,8 @@ use agere_protocol::protocol::ItemStartedEvent;
 #[cfg(test)]
 use agere_protocol::protocol::PlanDeltaEvent;
 #[cfg(test)]
+use agere_protocol::protocol::RateLimitWaitingEvent;
+#[cfg(test)]
 use agere_protocol::protocol::RealtimeConversationClosedEvent;
 #[cfg(test)]
 use agere_protocol::protocol::RealtimeConversationRealtimeEvent;
@@ -350,6 +352,9 @@ fn server_notification_thread_target(
         ServerNotification::ThreadTokenUsageUpdated(notification) => {
             Some(notification.thread_id.as_str())
         }
+        ServerNotification::ThreadRateLimitWaiting(notification) => {
+            Some(notification.thread_id.as_str())
+        }
         ServerNotification::ThreadGoalUpdated(notification) => {
             Some(notification.thread_id.as_str())
         }
@@ -508,6 +513,19 @@ fn server_notification_thread_events(
                         model_context_window: notification.token_usage.model_context_window,
                     }),
                     rate_limits: None,
+                }),
+            }],
+        )),
+        ServerNotification::ThreadRateLimitWaiting(notification) => Some((
+            ThreadId::from_string(&notification.thread_id).ok()?,
+            vec![Event {
+                id: notification.turn_id.clone(),
+                msg: EventMsg::RateLimitWaiting(RateLimitWaitingEvent {
+                    attempt: notification.attempt,
+                    max_attempts: notification.max_attempts,
+                    resume_at_unix_seconds: notification.resume_at,
+                    wait_seconds: notification.wait_seconds,
+                    reason: notification.reason,
                 }),
             }],
         )),

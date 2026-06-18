@@ -635,6 +635,134 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
 }
 
 #[tokio::test]
+async fn live_app_server_rate_limit_waiting_shows_countdown_status() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_server_notification(
+        ServerNotification::TurnStarted(TurnStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: AppServerTurn {
+                id: "turn-1".to_string(),
+                items: Vec::new(),
+                status: AppServerTurnStatus::InProgress,
+                error: None,
+                started_at: Some(0),
+                completed_at: None,
+                duration_ms: None,
+            },
+            model_context_window: None,
+        }),
+        /*replay_kind*/ None,
+    );
+    drain_insert_history(&mut rx);
+
+    chat.handle_server_notification(
+        ServerNotification::ThreadRateLimitWaiting(
+            agere_app_server_protocol::ThreadRateLimitWaitingNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                attempt: 2,
+                max_attempts: 5,
+                resume_at: chrono::Utc::now().timestamp() + 60,
+                wait_seconds: 60,
+                reason: "rate limited".to_string(),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should be visible");
+    assert!(
+        status.header().starts_with("Rate limited - retrying in "),
+        "unexpected status header: {:?}",
+        status.header()
+    );
+    assert!(
+        status.header().contains("(attempt 2/5)"),
+        "unexpected status header: {:?}",
+        status.header()
+    );
+    assert_eq!(
+        status.details(),
+        Some("Sleeping 1m 00s (server reason: rate limited)")
+    );
+
+    chat.handle_server_notification(
+        ServerNotification::AgentMessageDelta(
+            agere_app_server_protocol::AgentMessageDeltaNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "item-1".to_string(),
+                delta: "hello".to_string(),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should still be visible");
+    assert_eq!(status.header(), "Working");
+    assert_eq!(status.details(), None);
+    assert!(chat.retry_status_header.is_none());
+}
+
+#[tokio::test]
+async fn live_app_server_rate_limit_countdown_expiry_restores_status() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_server_notification(
+        ServerNotification::TurnStarted(TurnStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: AppServerTurn {
+                id: "turn-1".to_string(),
+                items: Vec::new(),
+                status: AppServerTurnStatus::InProgress,
+                error: None,
+                started_at: Some(0),
+                completed_at: None,
+                duration_ms: None,
+            },
+            model_context_window: None,
+        }),
+        /*replay_kind*/ None,
+    );
+    drain_insert_history(&mut rx);
+
+    chat.handle_server_notification(
+        ServerNotification::ThreadRateLimitWaiting(
+            agere_app_server_protocol::ThreadRateLimitWaitingNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                attempt: 2,
+                max_attempts: 5,
+                resume_at: chrono::Utc::now().timestamp() - 1,
+                wait_seconds: 60,
+                reason: "rate limited".to_string(),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+    assert!(chat.retry_status_header.is_some());
+    assert!(chat.rate_limit_wait.is_some());
+
+    chat.pre_draw_tick();
+
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should still be visible");
+    assert_eq!(status.header(), "Working");
+    assert_eq!(status.details(), None);
+    assert!(chat.retry_status_header.is_none());
+    assert!(chat.rate_limit_wait.is_none());
+}
+
+#[tokio::test]
 async fn live_app_server_server_overloaded_error_renders_warning() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

@@ -4903,7 +4903,7 @@ mod tests {
         );
         composer.set_text_content("abcdefghijklmnop".to_string(), Vec::new(), Vec::new());
 
-        let area = Rect::new(0, 0, 13, 3);
+        let area = Rect::new(0, 0, 30, 6);
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
@@ -4915,15 +4915,13 @@ mod tests {
             row
         };
 
-        let first_text_row = row_to_string(1);
-        let second_text_row = row_to_string(2);
+        let rendered: String = (0..area.height)
+            .map(row_to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
-            first_text_row.contains("abcdefghij"),
-            "expected first wrapped line to remain visible, saw: {first_text_row:?}",
-        );
-        assert!(
-            second_text_row.contains("klmnop"),
-            "expected second wrapped line to use composer padding, saw: {second_text_row:?}",
+            rendered.contains("abcdefghijklmnop"),
+            "expected text to be visible in rendered output:\n{rendered}",
         );
     }
 

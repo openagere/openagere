@@ -1237,6 +1237,11 @@ pub enum EventMsg {
     /// and the system is handling it (e.g., retrying with backoff).
     StreamError(StreamErrorEvent),
 
+    /// Notification that the agent is waiting before retrying after the
+    /// model provider returned `429 Too Many Requests`. The TUI uses
+    /// `resume_at_unix_seconds` to render a real-time countdown.
+    RateLimitWaiting(RateLimitWaitingEvent),
+
     /// Notification that the agent is about to apply a code patch. Mirrors
     /// `ExecCommandBegin` so front‑ends can show progress indicators.
     PatchApplyBegin(PatchApplyBeginEvent),
@@ -2986,6 +2991,22 @@ pub struct StreamErrorEvent {
     /// are exhausted).
     #[serde(default)]
     pub additional_details: Option<String>,
+}
+
+/// Emitted whenever the session is sleeping between rate-limit retries so
+/// front-ends can render a structured countdown until the next attempt.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct RateLimitWaitingEvent {
+    /// 1-based attempt index of the upcoming retry.
+    pub attempt: u32,
+    /// Configured maximum attempts; `0` means retry forever.
+    pub max_attempts: u32,
+    /// Unix epoch seconds when the wait is expected to elapse.
+    pub resume_at_unix_seconds: i64,
+    /// Total wait duration, in whole seconds.
+    pub wait_seconds: u64,
+    /// Human-readable explanation surfaced from the upstream 429 (truncated).
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

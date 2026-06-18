@@ -10,7 +10,15 @@ use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 
 fn normalize_agents_display_path(path: &Path) -> String {
-    dunce::simplified(path).display().to_string()
+    if let Some(rel) = relativize_to_home(path) {
+        if rel.as_os_str().is_empty() {
+            "~".to_string()
+        } else {
+            format!("~{}{}", std::path::MAIN_SEPARATOR, rel.display())
+        }
+    } else {
+        dunce::simplified(path).display().to_string()
+    }
 }
 
 pub(crate) fn compose_model_display(

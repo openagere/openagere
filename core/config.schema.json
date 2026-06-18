@@ -1781,6 +1781,48 @@
       },
       "type": "object"
     },
+    "RateLimitRetryToml": {
+      "additionalProperties": false,
+      "description": "`[rate_limit_retry]` block in `config.toml`. Controls how Agere retries turns when the model provider responds with HTTP `429 Too Many Requests`.",
+      "properties": {
+        "cap_secs": {
+          "description": "Hard cap on a single wait, in seconds. Defaults to ten minutes so long provider reset windows still use the slow retry cadence.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "delays_secs": {
+          "description": "Per-attempt wait schedule in seconds. The list is consumed in order; once exhausted the last entry is reused for every subsequent attempt.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "description": "When `false`, disables the slow-retry policy and surfaces 429s as terminal errors (legacy behaviour).",
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "description": "Maximum number of slow-retry attempts. The default is 32 attempts, which is just under five hours with the default schedule. Set to `0` to retry forever until the limit lifts.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "respect_resets_at": {
+          "description": "When `true` and the server reports a `resets_at` / `retry-after` hint, prefer that hint as the wait duration (clamped to `cap_secs`). Defaults to `false` so long provider windows are probed at the configured slow retry interval instead of sleeping for the full reset window.",
+          "type": "boolean"
+        },
+        "trigger_after_consecutive": {
+          "description": "Number of consecutive 429 responses required before the slow schedule can start after the normal stream retry budget is exhausted.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "RawMcpServerConfig": {
       "additionalProperties": false,
       "description": "Raw MCP config shape used for deserialization and supported-field JSON Schema generation.\n\nFields that are accepted only to produce targeted validation errors should be skipped in the generated schema.\n\nKeep `TryFrom<RawMcpServerConfig> for McpServerConfig` exhaustively destructuring this struct so new TOML fields cannot be added here without updating the validation/mapping logic that produces [`McpServerConfig`].",
@@ -3841,6 +3883,14 @@
         "$ref": "#/definitions/ProjectConfig"
       },
       "type": "object"
+    },
+    "rate_limit_retry": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/RateLimitRetryToml"
+        }
+      ],
+      "description": "Slow-retry policy for HTTP `429 Too Many Requests` responses from the model provider. See `RateLimitRetryToml` for individual fields. When omitted the default policy of `1m, 2m, 5m, 10m, 10m...` (capped at 10m, retried for just under five hours) is applied."
     },
     "realtime": {
       "allOf": [

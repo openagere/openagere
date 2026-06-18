@@ -44,6 +44,7 @@ use agere_config::types::Notice;
 use agere_config::types::NotificationCondition;
 use agere_config::types::NotificationMethod;
 use agere_config::types::Notifications;
+use agere_config::types::RateLimitRetryConfig;
 use agere_config::types::SkillsConfig;
 use agere_config::types::ToolSuggestDisabledTool;
 use agere_config::types::ToolSuggestDiscoverableType;
@@ -5848,6 +5849,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
             agent_roles: BTreeMap::new(),
             memories: MemoriesConfig::default(),
+            rate_limit_retry: RateLimitRetryConfig::default(),
             agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
             agent_interrupt_message_enabled: true,
             agere_home: fixture.agere_home(),
@@ -6043,6 +6045,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
         memories: MemoriesConfig::default(),
+        rate_limit_retry: RateLimitRetryConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
         agere_home: fixture.agere_home(),
@@ -6192,6 +6195,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
         memories: MemoriesConfig::default(),
+        rate_limit_retry: RateLimitRetryConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
         agere_home: fixture.agere_home(),
@@ -6326,6 +6330,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_roles: BTreeMap::new(),
         memories: MemoriesConfig::default(),
+        rate_limit_retry: RateLimitRetryConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
         agere_home: fixture.agere_home(),

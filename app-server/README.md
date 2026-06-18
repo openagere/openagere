@@ -1179,6 +1179,8 @@ There are additional item-specific events:
 
 `error` event is emitted whenever the server hits an error mid-turn (for example, upstream model errors or quota limits). Carries the same `{ error: { message, agereErrorInfo?, additionalDetails? } }` payload as `turn.status: "failed"` and may precede that terminal notification.
 
+`thread/rateLimit/waiting` is emitted while a turn is sleeping before an automatic retry after an upstream HTTP 429. It carries `{ threadId, turnId, attempt, maxAttempts, resumeAt, waitSeconds, reason }`; `resumeAt` is a Unix timestamp in seconds, and `maxAttempts: 0` means the retry policy has no configured attempt cap.
+
 `agereErrorInfo` maps to the `AgereErrorInfo` enum. Common values:
 
 - `ContextWindowExceeded`

@@ -9,6 +9,8 @@ use agere_client::TransportError;
 use agere_protocol::models::ResponseItem;
 use agere_protocol::protocol::ModelVerification;
 use agere_protocol::protocol::TokenUsage;
+use chrono::DateTime;
+use chrono::Utc;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -365,6 +367,19 @@ pub fn process_responses_event(
                         response_error = ApiError::InvalidRequest { message };
                     } else if is_server_overloaded_error(&error) {
                         response_error = ApiError::ServerOverloaded;
+                    } else if is_rate_limit_error(&error) {
+                        let retry_after = try_parse_retry_after(&error);
+                        let resets_at = error
+                            .resets_at
+                            .and_then(|seconds| DateTime::<Utc>::from_timestamp(seconds, 0));
+                        let message = error.message.unwrap_or_else(|| "rate limited".to_string());
+                        response_error = ApiError::RateLimited {
+                            status: http::StatusCode::TOO_MANY_REQUESTS,
+                            message,
+                            retry_after,
+                            resets_at,
+                            request_id: None,
+                        };
                     } else {
                         let delay = try_parse_retry_after(&error);
                         let message = error.message.unwrap_or_default();
@@ -408,7 +423,13 @@ pub fn process_responses_event(
             }
         }
         "response.output_item.added" => {
-            if let Some(item_val) = event.item {
+            if let Some(mut item_val) = event.item {
+                if item_val.get("type").and_then(Value::as_str) == Some("message")
+                    && item_val.get("content").is_none()
+                    && let Some(item) = item_val.as_object_mut()
+                {
+                    item.insert("content".to_string(), Value::Array(Vec::new()));
+                }
                 if let Ok(item) = serde_json::from_value::<ResponseItem>(item_val) {
                     return Ok(Some(ResponseEvent::OutputItemAdded(item)));
                 }
@@ -558,6 +579,10 @@ fn is_usage_not_included(error: &Error) -> bool {
 
 fn is_invalid_prompt_error(error: &Error) -> bool {
     error.code.as_deref() == Some("invalid_prompt")
+}
+
+fn is_rate_limit_error(error: &Error) -> bool {
+    error.code.as_deref() == Some("rate_limit_exceeded")
 }
 
 fn is_cyber_policy_error(error: &Error) -> bool {
@@ -825,6 +850,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn parses_skeleton_message_output_item_added_without_content() {
+        let events = run_sse(vec![
+            json!({
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                    "id": "msg_1"
+                }
+            }),
+            json!({
+                "type": "response.completed",
+                "response": { "id": "resp1" }
+            }),
+        ])
+        .await;
+
+        assert_matches!(
+            &events[0],
+            ResponseEvent::OutputItemAdded(ResponseItem::Message {
+                role,
+                content,
+                ..
+            }) if role == "assistant" && content.is_empty()
+        );
+        assert_matches!(&events[1], ResponseEvent::Completed { .. });
+    }
+
+    #[tokio::test]
     async fn emits_completed_without_stream_end() {
         let completed = json!({
             "type": "response.completed",
@@ -870,7 +926,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn error_when_error_event() {
+    async fn rate_limit_failed_event_is_rate_limited() {
         let raw_error = r#"{"type":"response.failed","sequence_number":3,"response":{"id":"resp_689bcf18d7f08194bf3440ba62fe05d803fee0cdac429894","object":"response","created_at":1755041560,"status":"failed","background":false,"error":{"code":"rate_limit_exceeded","message":"Rate limit reached for gpt-5.1 in organization org-AAA on tokens per min (TPM): Limit 30000, Used 22999, Requested 12528. Please try again in 11.054s. Visit https://platform.openai.com/account/rate-limits to learn more."}, "usage":null,"user":null,"metadata":{}}}"#;
 
         let sse1 = format!("event: response.failed\ndata: {raw_error}\n\n");
@@ -880,12 +936,21 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         match &events[0] {
-            Err(ApiError::Retryable { message, delay }) => {
+            Err(ApiError::RateLimited {
+                status,
+                message,
+                retry_after,
+                resets_at,
+                request_id,
+            }) => {
+                assert_eq!(*status, http::StatusCode::TOO_MANY_REQUESTS);
                 assert_eq!(
                     message,
                     "Rate limit reached for gpt-5.1 in organization org-AAA on tokens per min (TPM): Limit 30000, Used 22999, Requested 12528. Please try again in 11.054s. Visit https://platform.openai.com/account/rate-limits to learn more."
                 );
-                assert_eq!(*delay, Some(Duration::from_secs_f64(11.054)));
+                assert_eq!(*retry_after, Some(Duration::from_secs_f64(11.054)));
+                assert_eq!(*resets_at, None);
+                assert_eq!(*request_id, None);
             }
             other => panic!("unexpected second event: {other:?}"),
         }

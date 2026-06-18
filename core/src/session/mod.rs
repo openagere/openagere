@@ -184,6 +184,7 @@ use agere_protocol::exec_output::StreamOutput;
 mod handlers;
 mod mcp;
 mod multi_agents;
+mod rate_limit_retry;
 mod review;
 mod rollout_reconstruction;
 #[allow(clippy::module_inception)]
@@ -346,6 +347,7 @@ use agere_protocol::protocol::NetworkApprovalContext;
 use agere_protocol::protocol::NonSteerableTurnKind;
 use agere_protocol::protocol::Op;
 use agere_protocol::protocol::RateLimitSnapshot;
+use agere_protocol::protocol::RateLimitWaitingEvent;
 use agere_protocol::protocol::RequestUserInputEvent;
 use agere_protocol::protocol::ReviewDecision;
 use agere_protocol::protocol::SessionConfiguredEvent;
@@ -2993,6 +2995,17 @@ impl Session {
             additional_details: Some(additional_details),
         });
         self.send_event(turn_context, event).await;
+    }
+
+    /// Forward a structured rate-limit countdown to clients so the TUI can
+    /// render a live timer between slow-retry attempts.
+    pub(crate) async fn notify_rate_limit_waiting(
+        &self,
+        turn_context: &TurnContext,
+        event: RateLimitWaitingEvent,
+    ) {
+        self.send_event(turn_context, EventMsg::RateLimitWaiting(event))
+            .await;
     }
 
     /// Inject additional user input into the currently active turn.

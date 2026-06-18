@@ -42,6 +42,7 @@ use agere_config::types::OAuthCredentialsStoreMode;
 use agere_config::types::OtelConfig;
 use agere_config::types::OtelConfigToml;
 use agere_config::types::OtelExporterKind;
+use agere_config::types::RateLimitRetryConfig;
 use agere_config::types::ToolSuggestConfig;
 use agere_config::types::ToolSuggestDisabledTool;
 use agere_config::types::ToolSuggestDiscoverable;
@@ -536,6 +537,12 @@ pub struct Config {
 
     /// Memories subsystem settings.
     pub memories: MemoriesConfig,
+
+    /// Slow-retry policy applied when the model provider returns HTTP `429`.
+    /// Sourced from the `[rate_limit_retry]` block in `config.toml`; defaults
+    /// follow `RateLimitRetryConfig::default()` so users automatically get the
+    /// `1m, 2m, 5m, 10m, ...` schedule with `resets_at`-aware waits.
+    pub rate_limit_retry: RateLimitRetryConfig,
 
     /// Directory containing all Agere state (defaults to `~/.agere` but can be
     /// overridden by the `AGERE_HOME` environment variable).
@@ -2615,6 +2622,10 @@ impl Config {
             agent_max_depth,
             agent_roles,
             memories: cfg.memories.unwrap_or_default().into(),
+            rate_limit_retry: cfg
+                .rate_limit_retry
+                .map(RateLimitRetryConfig::from)
+                .unwrap_or_default(),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,
             agere_home,

@@ -5,7 +5,7 @@ expression: normalize_snapshot_paths(rendered)
 • Waiting for background terminal (0s • esc to …
   └ cargo test -p agere-core -- --exact…
 
-
+────────────────────────────────────────────────
 › Ask Agere to do anything
-
-  gpt-5.5 default · /tmp/project
+────────────────────────────────────────────────
+  gpt-5.5 none · Context 100% left · /tmp/proje…

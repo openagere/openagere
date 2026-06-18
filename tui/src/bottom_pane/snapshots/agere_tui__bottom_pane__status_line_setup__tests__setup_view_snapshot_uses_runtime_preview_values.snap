@@ -17,5 +17,5 @@ expression: "render_lines(&view, 72)"
   [ ] context-remaining     Percentage of context window remaining (o…  
   [ ] context-used          Percentage of context window used (omitte…  
                                                                         
-  gpt-5.4 · ~/agere-rs · jif/statusline-preview                           
+  gpt-5.4 · ~/agere-rs · jif/statusline-preview                         
   Use ↑↓ to navigate, ←→ to move, space to select, enter to confirm, esc

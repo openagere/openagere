@@ -1,15 +1,15 @@
 ---
-source: tui/src/chatwidget/tests.rs
-expression: popup
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+expression: strip_osc8_for_snapshot(&popup)
 ---
   Plugins
-  Figma · Installed · ChatGPT Marketplace
+  Figma · Installed · OpenAgere Marketplace
   Turn Figma files into implementation context.
 
-› 1. Back to plugins   Return to the plugin list.
-  2. Uninstall plugin  Remove this plugin now.
-     Skills            design-review, extract-copy
-     Apps              Figma, Slack
-     MCP Servers       figma-mcp, docs-mcp
+  › 1. Back to plugins   Return to the plugin list.
+    2. Uninstall plugin  Remove this plugin now.
+       Skills            design-review, extract-copy
+       Apps              Figma, Slack
+       MCP Servers       figma-mcp, docs-mcp
 
   Press esc to close.

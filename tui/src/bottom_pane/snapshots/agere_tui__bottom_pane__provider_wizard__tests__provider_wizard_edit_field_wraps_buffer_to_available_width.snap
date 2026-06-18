@@ -1,6 +1,5 @@
 ---
 source: tui/src/bottom_pane/provider_wizard.rs
-assertion_line: 1795
 expression: "render_snapshot(&view, 34)"
 ---
 Buffer {
@@ -19,14 +18,14 @@ Buffer {
         "enter save · esc cancel           ",
     ],
     styles: [
-        x: 0, y: 0, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
-        x: 2, y: 1, fg: Green, bg: DarkGray, underline: Reset, modifier: BOLD,
-        x: 4, y: 1, fg: Reset, bg: DarkGray, underline: Reset, modifier: BOLD,
-        x: 15, y: 1, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
-        x: 2, y: 3, fg: Reset, bg: DarkGray, underline: Reset, modifier: BOLD,
-        x: 4, y: 3, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
-        x: 2, y: 8, fg: Reset, bg: DarkGray, underline: Reset, modifier: DIM | ITALIC,
-        x: 32, y: 8, fg: Reset, bg: DarkGray, underline: Reset, modifier: NONE,
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Green, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 4, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 15, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 4, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 8, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 32, y: 8, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 10, fg: Cyan, bg: Reset, underline: Reset, modifier: DIM,
         x: 5, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 13, y: 10, fg: Cyan, bg: Reset, underline: Reset, modifier: DIM,

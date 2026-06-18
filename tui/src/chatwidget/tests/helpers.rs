@@ -257,6 +257,7 @@ pub(super) async fn make_chatwidget_manual(
         active_hook_cell: None,
         retry_status_header: None,
         pending_status_indicator_restore: false,
+        rate_limit_wait: None,
         suppress_queue_autosend: false,
         thread_id: None,
         dismissed_plan_mode_nudge_scopes: HashSet::new(),

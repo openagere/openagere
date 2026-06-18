@@ -5,9 +5,9 @@ expression: "render_lines_with_width(&view, 40)"
                                         
   Select Approval Mode                  
                                         
-› 1. Read Only (current)  Agere can     
-                          read files    
+  › 1. Read Only (current)  Agere can   
+                            read files  
                                         
-  Note: Use /setup-default-restriction 
+  Note: Use /setup-default-restriction  
   to allow network access.              
   Press enter to confirm or esc to go ba

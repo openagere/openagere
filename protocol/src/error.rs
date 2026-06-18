@@ -108,6 +108,12 @@ pub enum AgereErr {
     InvalidImageRequest(),
     #[error("{0}")]
     UsageLimitReached(UsageLimitReachedError),
+    /// Transient HTTP `429 Too Many Requests` response from the model
+    /// provider that is **not** an account-level usage limit. The turn loop
+    /// is expected to schedule a slow retry honouring `retry_after` /
+    /// `resets_at` hints surfaced by the provider.
+    #[error("{0}")]
+    RateLimited(RateLimitedError),
     #[error("Selected model is at capacity. Please try a different model.")]
     ServerOverloaded,
     #[error("{message}")]
@@ -188,6 +194,7 @@ impl AgereErr {
             | AgereErr::ServerOverloaded
             | AgereErr::CyberPolicy { .. } => false,
             AgereErr::Stream(..)
+            | AgereErr::RateLimited(_)
             | AgereErr::Timeout
             | AgereErr::UnexpectedStatus(_)
             | AgereErr::ResponseStreamFailed(_)
@@ -219,6 +226,9 @@ impl AgereErr {
             AgereErr::ServerOverloaded => AgereErrorInfo::ServerOverloaded,
             AgereErr::CyberPolicy { .. } => AgereErrorInfo::CyberPolicy,
             AgereErr::RetryLimit(_) => AgereErrorInfo::ResponseTooManyFailedAttempts {
+                http_status_code: self.http_status_code_value(),
+            },
+            AgereErr::RateLimited(_) => AgereErrorInfo::ResponseTooManyFailedAttempts {
                 http_status_code: self.http_status_code_value(),
             },
             AgereErr::ConnectionFailed(_) => AgereErrorInfo::HttpConnectionFailed {
@@ -257,6 +267,7 @@ impl AgereErr {
             AgereErr::UnexpectedStatus(err) => Some(err.status),
             AgereErr::ConnectionFailed(err) => err.source.status(),
             AgereErr::ResponseStreamFailed(err) => err.source.status(),
+            AgereErr::RateLimited(err) => Some(err.status),
             _ => None,
         };
         http_status_code.as_ref().map(StatusCode::as_u16)
@@ -438,6 +449,36 @@ impl std::fmt::Display for RetryLimitReachedError {
         )
     }
 }
+
+/// Transient `429 Too Many Requests` failure metadata. Carried by
+/// [`AgereErr::RateLimited`] so the session loop can drive the slow-retry
+/// schedule and so front-ends can render an accurate countdown.
+#[derive(Debug, Clone)]
+pub struct RateLimitedError {
+    pub status: StatusCode,
+    pub message: String,
+    pub retry_after: Option<Duration>,
+    pub resets_at: Option<DateTime<Utc>>,
+    pub request_id: Option<String>,
+}
+
+impl std::fmt::Display for RateLimitedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let trimmed = self.message.trim();
+        let body = if trimmed.is_empty() {
+            "rate limited".to_string()
+        } else {
+            format!("rate limited: {trimmed}")
+        };
+        if let Some(id) = &self.request_id {
+            write!(f, "{body} (status {}, request id: {id})", self.status)
+        } else {
+            write!(f, "{body} (status {})", self.status)
+        }
+    }
+}
+
+impl std::error::Error for RateLimitedError {}
 
 #[derive(Debug)]
 pub struct UsageLimitReachedError {

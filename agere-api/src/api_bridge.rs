@@ -4,6 +4,7 @@ use crate::rate_limits::parse_promo_message;
 use crate::rate_limits::parse_rate_limit_for_limit;
 use agere_protocol::auth::PlanType;
 use agere_protocol::error::AgereErr;
+use agere_protocol::error::RateLimitedError;
 use agere_protocol::error::RetryLimitReachedError;
 use agere_protocol::error::UnexpectedResponseError;
 use agere_protocol::error::UsageLimitReachedError;
@@ -100,8 +101,54 @@ pub fn map_api_error(err: ApiError) -> AgereErr {
                         }
                     }
 
-                    AgereErr::RetryLimit(RetryLimitReachedError {
+                    let parsed_rate_limit =
+                        serde_json::from_str::<RateLimitErrorResponse>(&body_text).ok();
+                    let error_code = parsed_rate_limit.as_ref().and_then(rate_limit_error_code);
+                    if error_code == Some("insufficient_quota") {
+                        return AgereErr::QuotaExceeded;
+                    }
+                    if error_code == Some("usage_not_included") {
+                        return AgereErr::UsageNotIncluded;
+                    }
+                    if !is_recoverable_rate_limit_error_code(
+                        error_code,
+                        RECOVERABLE_RATE_LIMIT_ERROR_CODES,
+                    ) {
+                        return AgereErr::UnexpectedStatus(UnexpectedResponseError {
+                            status,
+                            body: body_text,
+                            url,
+                            cf_ray: extract_header(headers.as_ref(), CF_RAY_HEADER),
+                            request_id: extract_request_id(headers.as_ref()),
+                            identity_authorization_error: extract_header(
+                                headers.as_ref(),
+                                X_OPENAI_AUTHORIZATION_ERROR_HEADER,
+                            ),
+                            identity_error_code: extract_x_error_json_code(headers.as_ref()),
+                        });
+                    }
+                    let retry_after = headers.as_ref().and_then(parse_retry_after_header);
+                    let resets_at = parsed_rate_limit
+                        .as_ref()
+                        .and_then(|err| err.error.resets_at)
+                        .and_then(|seconds| DateTime::<Utc>::from_timestamp(seconds, 0))
+                        .or_else(|| headers.as_ref().and_then(parse_rate_limit_resets_at));
+                    let message = parsed_rate_limit
+                        .and_then(|err| err.error.message)
+                        .filter(|message| !message.trim().is_empty())
+                        .unwrap_or_else(|| {
+                            let trimmed_body = body_text.trim();
+                            if trimmed_body.is_empty() {
+                                "rate limited".to_string()
+                            } else {
+                                trimmed_body.to_string()
+                            }
+                        });
+                    AgereErr::RateLimited(RateLimitedError {
                         status,
+                        message,
+                        retry_after,
+                        resets_at,
                         request_id: extract_request_tracking_id(headers.as_ref()),
                     })
                 } else {
@@ -128,7 +175,26 @@ pub fn map_api_error(err: ApiError) -> AgereErr {
                 AgereErr::Stream(msg, None)
             }
         },
-        ApiError::RateLimit(msg) => AgereErr::Stream(msg, None),
+        ApiError::RateLimit(msg) => AgereErr::RateLimited(RateLimitedError {
+            status: http::StatusCode::TOO_MANY_REQUESTS,
+            message: msg,
+            retry_after: None,
+            resets_at: None,
+            request_id: None,
+        }),
+        ApiError::RateLimited {
+            status,
+            message,
+            retry_after,
+            resets_at,
+            request_id,
+        } => AgereErr::RateLimited(RateLimitedError {
+            status,
+            message,
+            retry_after,
+            resets_at,
+            request_id,
+        }),
     }
 }
 
@@ -141,6 +207,7 @@ const X_ERROR_JSON_HEADER: &str = "x-error-json";
 const CYBER_POLICY_ERROR_CODE: &str = "cyber_policy";
 const CYBER_POLICY_FALLBACK_MESSAGE: &str =
     "This request has been flagged for possible cybersecurity risk.";
+const RECOVERABLE_RATE_LIMIT_ERROR_CODES: &[&str] = &[];
 
 #[cfg(test)]
 #[path = "api_bridge_tests.rs"]
@@ -161,6 +228,72 @@ fn extract_header(headers: Option<&HeaderMap>, name: &str) -> Option<String> {
             .and_then(|value| value.to_str().ok())
             .map(str::to_string)
     })
+}
+
+/// Parse the standard HTTP `Retry-After` header. Supports both the
+/// `<delta-seconds>` and `<HTTP-date>` forms; values that cannot be parsed
+/// (or that resolve to non-positive durations) are ignored.
+fn parse_retry_after_header(headers: &HeaderMap) -> Option<std::time::Duration> {
+    let raw = headers
+        .get(http::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Ok(secs) = raw.parse::<u64>() {
+        if secs == 0 {
+            return None;
+        }
+        return Some(std::time::Duration::from_secs(secs));
+    }
+    if let Ok(seconds) = raw.parse::<f64>()
+        && seconds.is_finite()
+        && seconds > 0.0
+    {
+        return Some(std::time::Duration::from_secs_f64(seconds));
+    }
+    let parsed = DateTime::parse_from_rfc2822(raw)
+        .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|_| DateTime::parse_from_rfc3339(raw).map(|dt| dt.with_timezone(&Utc)))
+        .ok()?;
+    let delta = parsed.signed_duration_since(Utc::now()).num_seconds();
+    (delta > 0).then(|| std::time::Duration::from_secs(delta as u64))
+}
+
+/// Read the soonest reset hint from the standard rate-limit header families.
+/// Values are unix seconds, matching what the Agere backend returns; the
+/// helper picks the earliest valid timestamp so the slow-retry policy waits
+/// only as long as necessary.
+fn parse_rate_limit_resets_at(headers: &HeaderMap) -> Option<DateTime<Utc>> {
+    const HEADERS: &[&str] = &[
+        "x-agere-primary-reset-at",
+        "x-agere-secondary-reset-at",
+        "x-ratelimit-reset",
+        "x-ratelimit-reset-requests",
+        "x-ratelimit-reset-tokens",
+    ];
+    HEADERS
+        .iter()
+        .filter_map(|name| {
+            let raw = headers.get(*name)?.to_str().ok()?.trim();
+            let seconds = raw.parse::<i64>().ok()?;
+            DateTime::<Utc>::from_timestamp(seconds, 0)
+        })
+        .min()
+}
+
+fn rate_limit_error_code(response: &RateLimitErrorResponse) -> Option<&str> {
+    response
+        .error
+        .code
+        .as_deref()
+        .or(response.error.error_type.as_deref())
+}
+
+fn is_recoverable_rate_limit_error_code(code: Option<&str>, allowlist: &[&str]) -> bool {
+    allowlist.is_empty() || code.is_some_and(|code| allowlist.contains(&code))
 }
 
 fn extract_x_error_json_code(headers: Option<&HeaderMap>) -> Option<String> {
@@ -186,5 +319,19 @@ struct UsageErrorBody {
     #[serde(rename = "type")]
     error_type: Option<String>,
     plan_type: Option<PlanType>,
+    resets_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RateLimitErrorResponse {
+    error: RateLimitErrorBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct RateLimitErrorBody {
+    #[serde(rename = "type")]
+    error_type: Option<String>,
+    code: Option<String>,
+    message: Option<String>,
     resets_at: Option<i64>,
 }

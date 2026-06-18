@@ -258,12 +258,12 @@ async fn status_permissions_full_disk_managed_with_network_is_danger_full_access
 
     assert_eq!(
         permissions_text_for(&config).as_deref(),
-        Some("Custom (danger-full-access, on-request)")
+        Some("Custom (workspace-write with network access, on-request)")
     );
 }
 
 #[tokio::test]
-async fn status_permissions_full_disk_managed_without_network_is_external_access() {
+async fn status_permissions_full_disk_managed_without_network_is_workspace_write() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
     config
@@ -281,7 +281,7 @@ async fn status_permissions_full_disk_managed_without_network_is_external_access
 
     assert_eq!(
         permissions_text_for(&config).as_deref(),
-        Some("Custom (external-access, on-request)")
+        Some("Custom (workspace-write, on-request)")
     );
 }
 

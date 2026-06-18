@@ -6,7 +6,7 @@ expression: normalize_snapshot_paths(rendered)
   └ • rm -rf '/tmp/guardian target 1'
     • rm -rf '/tmp/guardian target 2'
 
-
+────────────────────────────────────────────────────────────────────────
 › Ask Agere to do anything
-
-  gpt-5.5 default · /tmp/project
+────────────────────────────────────────────────────────────────────────
+  gpt-5.5 none · Context 100% left · /tmp/project

@@ -1224,6 +1224,7 @@ server_notification_definitions! {
     ThreadGoalUpdated => "thread/goal/updated" (v2::ThreadGoalUpdatedNotification),
     ThreadGoalCleared => "thread/goal/cleared" (v2::ThreadGoalClearedNotification),
     ThreadTokenUsageUpdated => "thread/tokenUsage/updated" (v2::ThreadTokenUsageUpdatedNotification),
+    ThreadRateLimitWaiting => "thread/rateLimit/waiting" (v2::ThreadRateLimitWaitingNotification),
     TurnStarted => "turn/started" (v2::TurnStartedNotification),
     HookStarted => "hook/started" (v2::HookStartedNotification),
     TurnCompleted => "turn/completed" (v2::TurnCompletedNotification),
@@ -2675,6 +2676,55 @@ mod tests {
             crate::experimental_api::ExperimentalApi::experimental_reason(&cleared),
             None
         );
+    }
+
+    #[test]
+    fn serializes_thread_rate_limit_waiting_notification() -> Result<()> {
+        let notification =
+            ServerNotification::ThreadRateLimitWaiting(v2::ThreadRateLimitWaitingNotification {
+                thread_id: "thr_123".to_string(),
+                turn_id: "turn_123".to_string(),
+                attempt: 2,
+                max_attempts: 5,
+                resume_at: 1_700_000_000,
+                wait_seconds: 60,
+                reason: "rate limited".to_string(),
+            });
+
+        let serialized = serde_json::to_value(&notification)?;
+
+        assert_eq!(
+            serialized,
+            json!({
+                "method": "thread/rateLimit/waiting",
+                "params": {
+                    "threadId": "thr_123",
+                    "turnId": "turn_123",
+                    "attempt": 2,
+                    "maxAttempts": 5,
+                    "resumeAt": 1_700_000_000,
+                    "waitSeconds": 60,
+                    "reason": "rate limited"
+                }
+            })
+        );
+        assert_eq!(
+            crate::experimental_api::ExperimentalApi::experimental_reason(&notification),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn thread_rate_limit_waiting_notification_exports_json_numbers_to_typescript() -> Result<()> {
+        let exported = v2::ThreadRateLimitWaitingNotification::export_to_string()?;
+
+        assert_eq!(exported.contains("resumeAt: number"), true);
+        assert_eq!(exported.contains("waitSeconds: number"), true);
+        assert_eq!(exported.contains("resumeAt: bigint"), false);
+        assert_eq!(exported.contains("waitSeconds: bigint"), false);
+
+        Ok(())
     }
 
     #[test]

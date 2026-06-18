@@ -477,9 +477,8 @@ mod tests {
     use agere_app_server_protocol::JSONRPCResponse;
     use agere_app_server_protocol::RequestId;
     use agere_app_server_protocol::ServerNotification;
-    use agere_app_server_protocol::ThreadGoal;
-    use agere_app_server_protocol::ThreadGoalStatus;
-    use agere_app_server_protocol::ThreadGoalUpdatedNotification;
+    use agere_app_server_protocol::ThreadRealtimeStartedNotification;
+    use agere_protocol::protocol::RealtimeConversationVersion;
     use agere_utils_fs::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -490,20 +489,11 @@ mod tests {
         AbsolutePathBuf::from_absolute_path(path).expect("absolute path")
     }
 
-    fn thread_goal_updated_notification() -> ServerNotification {
-        ServerNotification::ThreadGoalUpdated(ThreadGoalUpdatedNotification {
+    fn thread_realtime_started_notification() -> ServerNotification {
+        ServerNotification::ThreadRealtimeStarted(ThreadRealtimeStartedNotification {
             thread_id: "thread-1".to_string(),
-            turn_id: None,
-            goal: ThreadGoal {
-                thread_id: "thread-1".to_string(),
-                objective: "ship goal mode".to_string(),
-                status: ThreadGoalStatus::Active,
-                token_budget: None,
-                tokens_used: 0,
-                time_used_seconds: 0,
-                created_at: 1,
-                updated_at: 1,
-            },
+            session_id: None,
+            version: RealtimeConversationVersion::V1,
         })
     }
 
@@ -859,7 +849,9 @@ mod tests {
             &mut connections,
             OutgoingEnvelope::ToConnection {
                 connection_id,
-                message: OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
+                message: OutgoingMessage::AppServerNotification(
+                    thread_realtime_started_notification(),
+                ),
                 write_complete_tx: None,
             },
         )
@@ -892,7 +884,9 @@ mod tests {
             &mut connections,
             OutgoingEnvelope::ToConnection {
                 connection_id,
-                message: OutgoingMessage::AppServerNotification(thread_goal_updated_notification()),
+                message: OutgoingMessage::AppServerNotification(
+                    thread_realtime_started_notification(),
+                ),
                 write_complete_tx: None,
             },
         )
@@ -904,7 +898,7 @@ mod tests {
             .expect("experimental notification should reach opted-in client");
         assert!(matches!(
             message.message,
-            OutgoingMessage::AppServerNotification(ServerNotification::ThreadGoalUpdated(_))
+            OutgoingMessage::AppServerNotification(ServerNotification::ThreadRealtimeStarted(_))
         ));
     }
 

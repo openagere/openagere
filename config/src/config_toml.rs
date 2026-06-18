@@ -21,6 +21,7 @@ use crate::types::Notice;
 use crate::types::OAuthCredentialsStoreMode;
 use crate::types::OtelConfigToml;
 use crate::types::PluginConfig;
+use crate::types::RateLimitRetryToml;
 use crate::types::ShellEnvironmentPolicyToml;
 use crate::types::SkillsConfig;
 use crate::types::ToolSuggestConfig;
@@ -345,6 +346,12 @@ pub struct ConfigToml {
 
     /// Memories subsystem settings.
     pub memories: Option<MemoriesToml>,
+
+    /// Slow-retry policy for HTTP `429 Too Many Requests` responses from the
+    /// model provider. See `RateLimitRetryToml` for individual fields. When
+    /// omitted the default policy of `1m, 2m, 5m, 10m, 10m...` (capped at
+    /// 10m, retried for just under five hours) is applied.
+    pub rate_limit_retry: Option<RateLimitRetryToml>,
 
     /// User-level skill config entries keyed by SKILL.md path.
     pub skills: Option<SkillsConfig>,
@@ -827,7 +834,7 @@ fn project_config_for_lookup_key(
         .iter()
         .filter(|(key, _)| normalize_project_lookup_key((*key).clone()) == lookup_key)
         .collect();
-    normalized_matches.sort_by(|(left, _), (right, _)| left.cmp(right));
+    normalized_matches.sort_by_key(|(left, _)| *left);
     normalized_matches
         .first()
         .map(|(_, project_config)| (**project_config).clone())

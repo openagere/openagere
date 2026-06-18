@@ -1,11 +1,11 @@
 ---
-source: tui/src/chatwidget/tests.rs
+source: tui/src/chatwidget/tests/popups_and_settings.rs
 expression: popup
 ---
   Plugins
-  Failed to load plugin details.
+  Plugin action failed.
 
-     Plugin detail unavailable  Failed to load plugin details.
-› 1. Back to plugins            Return to the plugin list.
+       Plugin action failed  Failed to load plugin details.
+  › 1. Back to plugins       Return to the plugin list.
 
   Press esc to close.

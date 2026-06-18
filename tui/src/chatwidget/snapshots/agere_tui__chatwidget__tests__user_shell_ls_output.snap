@@ -1,7 +1,7 @@
 ---
-source: tui/src/chatwidget/tests.rs
+source: tui/src/chatwidget/tests/exec_flow.rs
 expression: blob
 ---
-• You ran ls
+• Bash(ls)
   └ file1
     file2

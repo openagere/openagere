@@ -151,6 +151,24 @@ fn to_error_event_handles_response_stream_failed() {
 }
 
 #[test]
+fn rate_limited_maps_to_too_many_failed_attempts() {
+    let err = AgereErr::RateLimited(RateLimitedError {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        message: "temporary rate limit".to_string(),
+        retry_after: Some(Duration::from_secs(60)),
+        resets_at: None,
+        request_id: Some("req-rate-limited".to_string()),
+    });
+
+    assert_eq!(
+        err.to_agere_protocol_error(),
+        AgereErrorInfo::ResponseTooManyFailedAttempts {
+            http_status_code: Some(429)
+        }
+    );
+}
+
+#[test]
 fn exec_policy_denial_reports_exit_code_when_no_output_available() {
     let output = ExecToolCallOutput {
         exit_code: 13,

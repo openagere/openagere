@@ -1,5 +1,7 @@
 use crate::rate_limits::RateLimitError;
 use agere_client::TransportError;
+use chrono::DateTime;
+use chrono::Utc;
 use http::StatusCode;
 use std::time::Duration;
 use thiserror::Error;
@@ -25,6 +27,17 @@ pub enum ApiError {
     },
     #[error("rate limit: {0}")]
     RateLimit(String),
+    /// HTTP 429 response that does not represent a per-account usage limit.
+    /// Carries any retry hints surfaced by the provider so the turn loop can
+    /// schedule the slow-retry policy without losing context.
+    #[error("rate limited (status {status}): {message}")]
+    RateLimited {
+        status: StatusCode,
+        message: String,
+        retry_after: Option<Duration>,
+        resets_at: Option<DateTime<Utc>>,
+        request_id: Option<String>,
+    },
     #[error("invalid request: {message}")]
     InvalidRequest { message: String },
     #[error("cyber policy: {message}")]

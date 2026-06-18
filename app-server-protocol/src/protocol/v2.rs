@@ -5014,6 +5014,21 @@ pub struct ErrorNotification {
     pub turn_id: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadRateLimitWaitingNotification {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    #[ts(type = "number")]
+    pub resume_at: i64,
+    #[ts(type = "number")]
+    pub wait_seconds: u64,
+    pub reason: String,
+}
+
 /// EXPERIMENTAL - thread realtime audio chunk.
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]

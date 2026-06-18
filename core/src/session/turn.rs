@@ -94,6 +94,7 @@ use agere_protocol::protocol::AskForApproval;
 use agere_protocol::protocol::ErrorEvent;
 use agere_protocol::protocol::EventMsg;
 use agere_protocol::protocol::PlanDeltaEvent;
+use agere_protocol::protocol::RateLimitWaitingEvent;
 use agere_protocol::protocol::ReasoningContentDeltaEvent;
 use agere_protocol::protocol::ReasoningRawContentDeltaEvent;
 use agere_protocol::protocol::TurnDiffEvent;
@@ -1070,6 +1071,8 @@ async fn run_sampling_request(
         )
         .await;
     let mut retries = 0;
+    let mut rate_limit_retries: u32 = 0;
+    let mut consecutive_429: u32 = 0;
     let mut initial_input = Some(input);
     loop {
         let prompt_input = if let Some(input) = initial_input.take() {
@@ -1111,8 +1114,19 @@ async fn run_sampling_request(
                 }
                 return Err(AgereErr::UsageLimitReached(e));
             }
+            Err(AgereErr::RateLimited(e)) => {
+                let cfg = turn_context.config.rate_limit_retry.clone();
+                if !cfg.enabled {
+                    return Err(AgereErr::RateLimited(e));
+                }
+                consecutive_429 = consecutive_429.saturating_add(1);
+                AgereErr::RateLimited(e)
+            }
             Err(err) => err,
         };
+        if !matches!(err, AgereErr::RateLimited(_)) {
+            consecutive_429 = 0;
+        }
 
         if !err.is_retryable() {
             return Err(err);
@@ -1166,7 +1180,52 @@ async fn run_sampling_request(
             }
             tokio::time::sleep(delay).await;
         } else {
-            return Err(err);
+            match err {
+                AgereErr::RateLimited(e) => {
+                    let cfg = turn_context.config.rate_limit_retry.clone();
+                    if consecutive_429 < cfg.trigger_after_consecutive {
+                        return Err(AgereErr::RateLimited(e));
+                    }
+                    if cfg.max_attempts != 0 && rate_limit_retries >= cfg.max_attempts {
+                        return Err(AgereErr::RateLimited(e));
+                    }
+                    let delay = crate::session::rate_limit_retry::compute_rate_limit_delay(
+                        &cfg,
+                        &e,
+                        rate_limit_retries,
+                    );
+                    rate_limit_retries = rate_limit_retries.saturating_add(1);
+                    let resume_at = (chrono::Utc::now()
+                        + chrono::Duration::from_std(delay).unwrap_or_default())
+                    .timestamp();
+                    let reason =
+                        crate::session::rate_limit_retry::truncate_rate_limit_reason(&e.message);
+                    sess.notify_rate_limit_waiting(
+                        &turn_context,
+                        RateLimitWaitingEvent {
+                            attempt: rate_limit_retries,
+                            max_attempts: cfg.max_attempts,
+                            resume_at_unix_seconds: resume_at,
+                            wait_seconds: delay.as_secs(),
+                            reason,
+                        },
+                    )
+                    .await;
+                    warn!(
+                        "rate limited (429) - sleeping {delay:?} before retry {rate_limit_retries}",
+                    );
+                    if crate::session::rate_limit_retry::sleep_until_rate_limit_retry(
+                        delay,
+                        &cancellation_token,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                    return Err(AgereErr::TurnAborted);
+                }
+                err => return Err(err),
+            }
         }
     }
 }
@@ -1552,6 +1611,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::UndoStarted(_)
         | EventMsg::UndoCompleted(_)
         | EventMsg::StreamError(_)
+        | EventMsg::RateLimitWaiting(_)
         | EventMsg::TurnDiff(_)
         | EventMsg::GetHistoryEntryResponse(_)
         | EventMsg::McpListToolsResponse(_)

@@ -2,8 +2,9 @@
 source: tui/src/history_cell.rs
 expression: rendered
 ---
-• Bash(a_very_long_tok
-        en_without_spac
-        es_to_force_wrap
-        ping)
+•
+        Bash(a_very_long
+        _token_without_s
+        paces_to_force_w
+        rapping)
   └ (no output)

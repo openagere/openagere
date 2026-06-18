@@ -16,7 +16,7 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
 
 • Messages to be submitted at end of turn
   ↳ Steer submitted while /compact was running.
-
+────────────────────────────────────────────────────────────────────────────────
 › Ask Agere to do anything
-
-  gpt-5.5 default · /tmp/project
+────────────────────────────────────────────────────────────────────────────────
+  gpt-5.5 none · Context 100% left · /tmp/project

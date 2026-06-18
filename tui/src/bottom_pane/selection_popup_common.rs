@@ -7,8 +7,7 @@ use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::BorderType;
-use ratatui::widgets::Borders;
+use ratatui::widgets::Block;
 use ratatui::widgets::Widget;
 use std::borrow::Cow;
 use unicode_width::UnicodeWidthChar;
@@ -16,7 +15,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::key_hint::KeyBinding;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
-use crate::neon_frame::popup_frame;
 use crate::render::Insets;
 use crate::render::RectExt as _;
 use crate::style::popup_surface_style;
@@ -107,15 +105,7 @@ fn render_menu_surface_for_style(area: Rect, buf: &mut Buffer, surface_style: St
     if area.is_empty() {
         return area;
     }
-    let frame = if surface_style.bg.is_some() {
-        popup_frame().style(surface_style)
-    } else {
-        popup_frame()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().dim())
-    };
-    frame.render(area, buf);
+    Block::default().style(surface_style).render(area, buf);
     menu_surface_inset(area)
 }
 
@@ -150,13 +140,9 @@ mod surface_tests {
         let content = render_menu_surface_for_style(area, &mut buf, Style::default());
 
         assert_eq!(content, Rect::new(2, 1, 4, 1));
-        assert_eq!(buf[(0, 0)].symbol(), "╭");
-        assert_eq!(buf[(7, 0)].symbol(), "╮");
-        assert_eq!(buf[(0, 2)].symbol(), "╰");
-        assert_eq!(buf[(7, 2)].symbol(), "╯");
         for y in area.y..area.bottom() {
             for x in area.x..area.right() {
-                assert_eq!(buf[(x, y)].bg, Color::Reset);
+                assert_eq!(buf[(x, y)].symbol(), " ");
             }
         }
     }

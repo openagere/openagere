@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "attempt": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "maxAttempts": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "resumeAt": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    },
+    "waitSeconds": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "attempt",
+    "maxAttempts",
+    "reason",
+    "resumeAt",
+    "threadId",
+    "turnId",
+    "waitSeconds"
+  ],
+  "title": "ThreadRateLimitWaitingNotification",
+  "type": "object"
+}

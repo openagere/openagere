@@ -338,6 +338,109 @@ impl From<MemoriesToml> for MemoriesConfig {
     }
 }
 
+/// `[rate_limit_retry]` block in `config.toml`. Controls how Agere retries
+/// turns when the model provider responds with HTTP `429 Too Many Requests`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct RateLimitRetryToml {
+    /// When `false`, disables the slow-retry policy and surfaces 429s as
+    /// terminal errors (legacy behaviour).
+    pub enabled: Option<bool>,
+    /// Maximum number of slow-retry attempts. The default is 32 attempts,
+    /// which is just under five hours with the default schedule. Set to `0`
+    /// to retry forever until the limit lifts.
+    pub max_attempts: Option<u32>,
+    /// Per-attempt wait schedule in seconds. The list is consumed in order;
+    /// once exhausted the last entry is reused for every subsequent attempt.
+    pub delays_secs: Option<Vec<u64>>,
+    /// When `true` and the server reports a `resets_at` / `retry-after` hint,
+    /// prefer that hint as the wait duration (clamped to `cap_secs`). Defaults
+    /// to `false` so long provider windows are probed at the configured slow
+    /// retry interval instead of sleeping for the full reset window.
+    pub respect_resets_at: Option<bool>,
+    /// Hard cap on a single wait, in seconds. Defaults to ten minutes so
+    /// long provider reset windows still use the slow retry cadence.
+    pub cap_secs: Option<u64>,
+    /// Number of consecutive 429 responses required before the slow schedule
+    /// can start after the normal stream retry budget is exhausted.
+    pub trigger_after_consecutive: Option<u32>,
+}
+
+/// Effective rate-limit retry settings after defaults have been applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RateLimitRetryConfig {
+    pub enabled: bool,
+    pub max_attempts: u32,
+    pub delays_secs: Vec<u64>,
+    pub respect_resets_at: bool,
+    pub cap_secs: u64,
+    pub trigger_after_consecutive: u32,
+}
+
+impl Default for RateLimitRetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_attempts: DEFAULT_RATE_LIMIT_RETRY_MAX_ATTEMPTS,
+            delays_secs: DEFAULT_RATE_LIMIT_RETRY_DELAYS_SECS.to_vec(),
+            respect_resets_at: false,
+            cap_secs: DEFAULT_RATE_LIMIT_RETRY_CAP_SECS,
+            trigger_after_consecutive: DEFAULT_RATE_LIMIT_RETRY_TRIGGER_AFTER_CONSECUTIVE,
+        }
+    }
+}
+
+impl RateLimitRetryConfig {
+    /// Pick the delay for the n-th *slow* retry attempt (`attempt` is 0-based,
+    /// meaning the first slow wait uses `delays_secs[0]`). Falls back to the
+    /// last entry of `delays_secs` once the schedule is exhausted, matching
+    /// the `1m, 2m, 5m, 10m, 10m...` shape described in the design.
+    pub fn delay_secs_for_attempt(&self, attempt: u32) -> u64 {
+        if self.delays_secs.is_empty() {
+            return DEFAULT_RATE_LIMIT_RETRY_DELAYS_SECS
+                .last()
+                .copied()
+                .unwrap_or(60);
+        }
+        let idx = (attempt as usize).min(self.delays_secs.len().saturating_sub(1));
+        self.delays_secs[idx].min(self.cap_secs)
+    }
+}
+
+impl From<RateLimitRetryToml> for RateLimitRetryConfig {
+    fn from(toml: RateLimitRetryToml) -> Self {
+        let defaults = Self::default();
+        let delays_secs = toml
+            .delays_secs
+            .map(|v| {
+                let mut v = v;
+                if v.len() > MAX_RATE_LIMIT_RETRY_DELAYS_LEN {
+                    v.truncate(MAX_RATE_LIMIT_RETRY_DELAYS_LEN);
+                }
+                if v.is_empty() {
+                    defaults.delays_secs.clone()
+                } else {
+                    v.into_iter().map(|secs| secs.max(1)).collect()
+                }
+            })
+            .unwrap_or(defaults.delays_secs);
+        Self {
+            enabled: toml.enabled.unwrap_or(defaults.enabled),
+            max_attempts: toml.max_attempts.unwrap_or(defaults.max_attempts),
+            delays_secs,
+            respect_resets_at: toml.respect_resets_at.unwrap_or(defaults.respect_resets_at),
+            cap_secs: toml
+                .cap_secs
+                .map(|secs| secs.max(1))
+                .unwrap_or(defaults.cap_secs),
+            trigger_after_consecutive: toml
+                .trigger_after_consecutive
+                .map(|n| n.max(1))
+                .unwrap_or(defaults.trigger_after_consecutive),
+        }
+    }
+}
+
 /// Default settings that apply to all apps.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -591,6 +694,28 @@ pub struct ModelAvailabilityNuxConfig {
 
 /// Fallback resize-reflow row cap when Agere cannot identify a terminal-specific scrollback size.
 pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
+
+/// Default schedule (in seconds) used by the rate-limit retry policy when the
+/// user has not configured `[rate_limit_retry] delays_secs` in `config.toml`.
+/// The list defines the slow-retry curve after the normal stream retry budget
+/// is exhausted; once exhausted the last entry is reused for every subsequent
+/// attempt.
+pub const DEFAULT_RATE_LIMIT_RETRY_DELAYS_SECS: &[u64] = &[60, 120, 300, 600];
+/// Hard cap on a single rate-limit wait. Defaults to ten minutes so even
+/// server-supplied `resets_at` hints cannot make the agent sleep longer than
+/// the configured slow retry cadence.
+pub const DEFAULT_RATE_LIMIT_RETRY_CAP_SECS: u64 = 600;
+/// Number of consecutive 429 responses that must occur before the slow
+/// `[rate_limit_retry]` schedule kicks in. Defaults to `1` so a single 429
+/// may enter the slow retry curve after the normal stream retry budget is
+/// exhausted.
+pub const DEFAULT_RATE_LIMIT_RETRY_TRIGGER_AFTER_CONSECUTIVE: u32 = 1;
+/// Default value for `max_attempts`. With the default schedule this is
+/// `1m + 2m + 5m + 29 * 10m = 298m`, just under five hours.
+pub const DEFAULT_RATE_LIMIT_RETRY_MAX_ATTEMPTS: u32 = 32;
+/// Maximum number of entries we accept in `delays_secs` to bound memory and
+/// avoid pathological configs.
+pub const MAX_RATE_LIMIT_RETRY_DELAYS_LEN: usize = 64;
 
 /// Collection of settings that are specific to the TUI.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]

@@ -769,16 +769,15 @@ fn exec_options(
             ReviewDecision::ApprovedExecpolicyAmendment {
                 proposed_execpolicy_amendment,
             } => {
-                // Display just the command name (first token of the amendment).
-                let display_name = proposed_execpolicy_amendment
-                    .command()
-                    .first()
-                    .map(std::string::String::as_str)
-                    .unwrap_or("...");
+                let rendered_prefix =
+                    strip_bash_lc_and_escape(proposed_execpolicy_amendment.command());
+                if rendered_prefix.contains('\n') || rendered_prefix.contains('\r') {
+                    return None;
+                }
 
                 Some(ApprovalOption {
                     label: format!(
-                        "Yes, and don't ask again for commands that start with `{display_name}`"
+                        "Yes, and don't ask again for commands that start with `{rendered_prefix}`"
                     ),
                     decision: ApprovalDecision::Review(
                         ReviewDecision::ApprovedExecpolicyAmendment {

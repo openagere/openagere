@@ -80,6 +80,7 @@ pub fn telemetry_api_error_message(error: &ApiError) -> String {
         ApiError::UsageNotIncluded => "usage not included".to_string(),
         ApiError::Retryable { .. } => "retryable error".to_string(),
         ApiError::RateLimit(_) => "rate limit".to_string(),
+        ApiError::RateLimited { status, .. } => format!("rate limited {}", status.as_u16()),
         ApiError::InvalidRequest { .. } => "invalid request".to_string(),
         ApiError::CyberPolicy { .. } => "cyber policy".to_string(),
         ApiError::ServerOverloaded => "server overloaded".to_string(),

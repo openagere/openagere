@@ -3816,6 +3816,48 @@
       ],
       "type": "object"
     },
+    "ThreadRateLimitWaitingNotification": {
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "maxAttempts": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resumeAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "waitSeconds": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attempt",
+        "maxAttempts",
+        "reason",
+        "resumeAt",
+        "threadId",
+        "turnId",
+        "waitSeconds"
+      ],
+      "type": "object"
+    },
     "ThreadRealtimeAudioChunk": {
       "description": "EXPERIMENTAL - thread realtime audio chunk.",
       "properties": {
@@ -4872,6 +4914,26 @@
         "params"
       ],
       "title": "Thread/tokenUsage/updatedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/rateLimit/waiting"
+          ],
+          "title": "Thread/rateLimit/waitingNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadRateLimitWaitingNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Thread/rateLimit/waitingNotification",
       "type": "object"
     },
     {

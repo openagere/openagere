@@ -2,11 +2,11 @@
 source: tui/src/history_cell.rs
 expression: rendered
 ---
-• Bash(echo this_is_a_very
-        _long_single_token
-        _that_will_wrap_ac
-        ross_the_available_w
-        idth)
+• Bash(echo
+        this_is_a_very_long_
+        single_token_that_wi
+        ll_wrap_across_the_a
+        vailable_width)
   └ error: first line on
     stderr
     error: second line on

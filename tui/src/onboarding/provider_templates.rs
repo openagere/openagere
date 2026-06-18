@@ -291,11 +291,11 @@ mod tests {
         let templates = builtin_templates_for(Region::Intl);
         let names: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
         for required in [
-            "openai",
-            "anthropic",
-            "deepseek",
-            "openrouter",
-            "alicodingplan",
+            "OpenAI",
+            "Anthropic",
+            "DeepSeek",
+            "OpenRouter",
+            "Alibaba Coding Plan",
         ] {
             assert!(
                 names.contains(&required),

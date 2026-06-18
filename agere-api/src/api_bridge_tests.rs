@@ -162,6 +162,75 @@ fn map_api_error_maps_usage_limit_limit_name_header() {
 }
 
 #[test]
+fn map_api_error_maps_transient_429_to_rate_limited() {
+    let mut headers = HeaderMap::new();
+    headers.insert(REQUEST_ID_HEADER, http::HeaderValue::from_static("req-429"));
+    headers.insert(
+        http::header::RETRY_AFTER,
+        http::HeaderValue::from_static("3"),
+    );
+    let body = serde_json::json!({
+        "error": {
+            "type": "rate_limit_exceeded",
+            "code": "rate_limit_exceeded",
+            "message": "too many requests",
+            "resets_at": 1738888888
+        }
+    })
+    .to_string();
+
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: Some(headers),
+        body: Some(body),
+    }));
+
+    let AgereErr::RateLimited(rate_limited) = err else {
+        panic!("expected AgereErr::RateLimited, got {err:?}");
+    };
+    assert_eq!(rate_limited.status, http::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(rate_limited.message, "too many requests");
+    assert_eq!(
+        rate_limited.retry_after,
+        Some(std::time::Duration::from_secs(3))
+    );
+    assert_eq!(
+        rate_limited.resets_at.map(|value| value.timestamp()),
+        Some(1738888888)
+    );
+    assert_eq!(rate_limited.request_id.as_deref(), Some("req-429"));
+}
+
+#[test]
+fn map_api_error_maps_insufficient_quota_429_to_terminal_quota_error() {
+    let body = serde_json::json!({
+        "error": {
+            "code": "insufficient_quota",
+            "message": "You exceeded your current quota."
+        }
+    })
+    .to_string();
+
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body),
+    }));
+
+    assert!(matches!(err, AgereErr::QuotaExceeded));
+}
+
+#[test]
+fn empty_recoverable_rate_limit_code_allowlist_allows_any_code() {
+    assert!(is_recoverable_rate_limit_error_code(
+        Some("insufficient_quota"),
+        &[]
+    ));
+}
+
+#[test]
 fn map_api_error_does_not_fallback_limit_name_to_limit_id() {
     let mut headers = HeaderMap::new();
     headers.insert(

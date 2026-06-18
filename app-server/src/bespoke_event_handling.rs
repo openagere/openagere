@@ -80,6 +80,7 @@ use agere_app_server_protocol::TerminalInteractionNotification;
 use agere_app_server_protocol::ThreadGoalUpdatedNotification;
 use agere_app_server_protocol::ThreadItem;
 use agere_app_server_protocol::ThreadNameUpdatedNotification;
+use agere_app_server_protocol::ThreadRateLimitWaitingNotification;
 use agere_app_server_protocol::ThreadRealtimeClosedNotification;
 use agere_app_server_protocol::ThreadRealtimeErrorNotification;
 use agere_app_server_protocol::ThreadRealtimeItemAddedNotification;
@@ -1464,6 +1465,21 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
         EventMsg::TokenCount(token_count_event) => {
             handle_token_count_event(conversation_id, event_turn_id, token_count_event, &outgoing)
+                .await;
+        }
+        EventMsg::RateLimitWaiting(ev) => {
+            outgoing
+                .send_server_notification(ServerNotification::ThreadRateLimitWaiting(
+                    ThreadRateLimitWaitingNotification {
+                        thread_id: conversation_id.to_string(),
+                        turn_id: event_turn_id.clone(),
+                        attempt: ev.attempt,
+                        max_attempts: ev.max_attempts,
+                        resume_at: ev.resume_at_unix_seconds,
+                        wait_seconds: ev.wait_seconds,
+                        reason: ev.reason,
+                    },
+                ))
                 .await;
         }
         EventMsg::Error(ev) => {
@@ -3157,6 +3173,7 @@ mod tests {
     use agere_protocol::protocol::GuardianAssessmentStatus;
     use agere_protocol::protocol::McpInvocation;
     use agere_protocol::protocol::RateLimitSnapshot;
+    use agere_protocol::protocol::RateLimitWaitingEvent;
     use agere_protocol::protocol::RateLimitWindow;
     use agere_protocol::protocol::TokenUsage;
     use agere_protocol::protocol::TokenUsageInfo;
@@ -4556,6 +4573,75 @@ mod tests {
             rx.try_recv().is_err(),
             "no notifications should be emitted when token usage info is absent"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rate_limit_waiting_event_emits_app_server_notification() -> Result<()> {
+        let agere_home = TempDir::new()?;
+        let config = load_default_config_for_test(&agere_home).await;
+        let thread_manager = Arc::new(
+            agere_core::test_support::thread_manager_with_models_provider_and_home(
+                AgereAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.agere_home.to_path_buf(),
+                Arc::new(agere_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let agere_core::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_manager.start_thread(config).await?;
+        let thread_state = new_thread_state();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
+        let outgoing = ThreadScopedOutgoingMessageSender::new(
+            outgoing,
+            vec![ConnectionId(1)],
+            conversation_id,
+        );
+
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::RateLimitWaiting(RateLimitWaitingEvent {
+                    attempt: 2,
+                    max_attempts: 5,
+                    resume_at_unix_seconds: 1_700_000_000,
+                    wait_seconds: 60,
+                    reason: "rate limited".to_string(),
+                }),
+            },
+            conversation_id,
+            conversation,
+            thread_manager,
+            None,
+            outgoing,
+            thread_state,
+            ThreadWatchManager::new(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+            ApiVersion::V2,
+            "test-provider".to_string(),
+            agere_home.path(),
+        )
+        .await;
+
+        let msg = recv_broadcast_message(&mut rx).await?;
+        match msg {
+            OutgoingMessage::AppServerNotification(ServerNotification::ThreadRateLimitWaiting(
+                payload,
+            )) => {
+                assert_eq!(payload.thread_id, conversation_id.to_string());
+                assert_eq!(payload.turn_id, "turn-1");
+                assert_eq!(payload.attempt, 2);
+                assert_eq!(payload.max_attempts, 5);
+                assert_eq!(payload.resume_at, 1_700_000_000);
+                assert_eq!(payload.wait_seconds, 60);
+                assert_eq!(payload.reason, "rate limited");
+            }
+            other => bail!("unexpected notification: {other:?}"),
+        }
         Ok(())
     }
 
