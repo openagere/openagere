@@ -3174,7 +3174,10 @@ impl ChatWidget {
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
         match info {
-            Some(info) => self.apply_token_info(info),
+            Some(info) => {
+                self.pre_review_token_info = None;
+                self.apply_token_info(info);
+            }
             None => {
                 self.bottom_pane
                     .set_context_window(/*percent*/ None, /*used_tokens*/ None);
@@ -5003,6 +5006,7 @@ impl ChatWidget {
             StatusDetailsCapitalization::Preserve,
             STATUS_DETAILS_DEFAULT_MAX_LINES,
         );
+        self.request_redraw();
     }
 
     fn refresh_rate_limit_wait_status(&mut self) {
@@ -5027,6 +5031,8 @@ impl ChatWidget {
             StatusDetailsCapitalization::Preserve,
             STATUS_DETAILS_DEFAULT_MAX_LINES,
         );
+        self.frame_requester
+            .schedule_frame_in(Duration::from_secs(1));
     }
 
     pub(crate) fn pre_draw_tick(&mut self) {

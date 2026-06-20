@@ -478,11 +478,11 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
             )),
             model: requested_model.to_string(),
             effort: None,
-            summary: Some(
+            summary: Some(Some(
                 config
                     .model_reasoning_summary
                     .unwrap_or(ReasoningSummary::Auto),
-            ),
+            )),
             service_tier: None,
             collaboration_mode: None,
             personality: None,
@@ -648,7 +648,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
             permission_profile,
             model: REMOTE_MODEL_SLUG.to_string(),
             effort: None,
-            summary: Some(ReasoningSummary::Auto),
+            summary: Some(Some(ReasoningSummary::Auto)),
             service_tier: None,
             collaboration_mode: None,
             personality: None,
@@ -877,7 +877,7 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
             permission_profile,
             model: model.to_string(),
             effort: None,
-            summary: Some(ReasoningSummary::Auto),
+            summary: Some(Some(ReasoningSummary::Auto)),
             service_tier: None,
             collaboration_mode: None,
             personality: None,

@@ -1755,12 +1755,12 @@ async fn user_turn_collaboration_mode_overrides_model_and_effort() -> anyhow::Re
                 config.legacy_access_policy().as_str(),
             )),
             model: session_configured.model.clone(),
-            effort: Some(ReasoningEffort::Low),
-            summary: Some(
+            effort: Some(Some(ReasoningEffort::Low)),
+            summary: Some(Some(
                 config
                     .model_reasoning_summary
                     .unwrap_or(ReasoningSummary::Auto),
-            ),
+            )),
             service_tier: None,
             collaboration_mode: Some(collaboration_mode),
             final_output_json_schema: None,
@@ -1879,7 +1879,7 @@ async fn user_turn_explicit_reasoning_summary_overrides_model_catalog_default() 
             )),
             model: session_configured.model,
             effort: None,
-            summary: Some(ReasoningSummary::Concise),
+            summary: Some(Some(ReasoningSummary::Concise)),
             service_tier: None,
             collaboration_mode: None,
             final_output_json_schema: None,

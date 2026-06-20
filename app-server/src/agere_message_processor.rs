@@ -172,6 +172,8 @@ use agere_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use agere_app_server_protocol::ThreadMetadataUpdateParams;
 use agere_app_server_protocol::ThreadMetadataUpdateResponse;
 use agere_app_server_protocol::ThreadNameUpdatedNotification;
+use agere_app_server_protocol::ThreadProviderUpdateParams;
+use agere_app_server_protocol::ThreadProviderUpdateResponse;
 use agere_app_server_protocol::ThreadReadParams;
 use agere_app_server_protocol::ThreadReadResponse;
 use agere_app_server_protocol::ThreadRealtimeAppendAudioParams;
@@ -307,6 +309,8 @@ use agere_protocol::ThreadId;
 use agere_protocol::config_types::CollaborationMode;
 use agere_protocol::config_types::ForcedLoginMethod;
 use agere_protocol::config_types::Personality;
+use agere_protocol::config_types::ReasoningSummary;
+use agere_protocol::config_types::ServiceTier;
 use agere_protocol::config_types::TrustLevel;
 use agere_protocol::config_types::WindowsExecutionRestrictionLevel;
 use agere_protocol::dynamic_tools::DynamicToolSpec as CoreDynamicToolSpec;
@@ -314,6 +318,7 @@ use agere_protocol::error::AgereErr;
 use agere_protocol::error::Result as AgereResult;
 use agere_protocol::items::TurnItem;
 use agere_protocol::models::ResponseItem;
+use agere_protocol::openai_models::ReasoningEffort;
 use agere_protocol::permissions::FileSystemAccessPolicy;
 use agere_protocol::protocol::AgentStatus;
 use agere_protocol::protocol::ConversationAudioParams;
@@ -687,6 +692,48 @@ fn configured_thread_store(config: &Config) -> Arc<dyn ThreadStore> {
         ThreadStoreConfig::Remote { endpoint } => Arc::new(RemoteThreadStore::new(endpoint)),
         #[cfg(debug_assertions)]
         ThreadStoreConfig::InMemory { id } => InMemoryThreadStore::for_id(id),
+    }
+}
+
+fn apply_configured_scalar<T>(configured: Option<T>) -> Option<Option<T>> {
+    configured.map(Some)
+}
+
+#[derive(Clone, Copy)]
+struct ProviderConfiguredScalars {
+    reasoning_effort: Option<ReasoningEffort>,
+    reasoning_summary: Option<ReasoningSummary>,
+    service_tier: Option<ServiceTier>,
+}
+
+impl ProviderConfiguredScalars {
+    fn from_config(config: &agere_core::config::Config) -> Self {
+        Self {
+            reasoning_effort: config.model_reasoning_effort,
+            reasoning_summary: config.model_reasoning_summary,
+            service_tier: config.service_tier,
+        }
+    }
+
+    fn effort_override(
+        self,
+        requested: Option<Option<ReasoningEffort>>,
+    ) -> Option<Option<ReasoningEffort>> {
+        requested.or_else(|| apply_configured_scalar(self.reasoning_effort))
+    }
+
+    fn summary_override(
+        self,
+        requested: Option<Option<ReasoningSummary>>,
+    ) -> Option<Option<ReasoningSummary>> {
+        requested.or_else(|| apply_configured_scalar(self.reasoning_summary))
+    }
+
+    fn service_tier_override(
+        self,
+        requested: Option<Option<ServiceTier>>,
+    ) -> Option<Option<ServiceTier>> {
+        requested.or_else(|| apply_configured_scalar(self.service_tier))
     }
 }
 
@@ -1086,6 +1133,10 @@ impl AgereMessageProcessor {
             }
             ClientRequest::TurnInterrupt { request_id, params } => {
                 self.turn_interrupt(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ThreadProviderUpdate { request_id, params } => {
+                self.thread_provider_update(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::ThreadRealtimeStart { request_id, params } => {
@@ -5049,6 +5100,80 @@ impl AgereMessageProcessor {
         outgoing.send_result(request_id, result).await;
     }
 
+    async fn thread_provider_update(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadProviderUpdateParams,
+    ) {
+        let result = self.thread_provider_update_response(params).await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn thread_provider_update_response(
+        &self,
+        params: ThreadProviderUpdateParams,
+    ) -> Result<ThreadProviderUpdateResponse, JSONRPCErrorError> {
+        let ThreadProviderUpdateParams {
+            thread_id,
+            model_provider,
+        } = params;
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        let (_thread_id, thread) = self.load_thread(&thread_id.to_string()).await?;
+        if thread.has_active_turn().await {
+            return Err(invalid_request(
+                "model provider updates are only supported when the thread is idle",
+            ));
+        }
+
+        let snapshot = thread.config_snapshot().await;
+        let latest_config = self
+            .config_manager
+            .load_latest_config(Some(snapshot.cwd.to_path_buf()))
+            .await
+            .map_err(|err| {
+                invalid_request(format!(
+                    "failed to load config for model provider update: {err}"
+                ))
+            })?;
+        if latest_config.model_provider_id != model_provider {
+            return Err(invalid_request(format!(
+                "latest config selects model provider `{}`, not `{model_provider}`",
+                latest_config.model_provider_id
+            )));
+        }
+
+        let model = latest_config
+            .model
+            .clone()
+            .unwrap_or_else(|| snapshot.model.clone());
+        let configured_scalars = ProviderConfiguredScalars::from_config(&latest_config);
+        let provider = latest_config.model_provider.clone();
+        let latest_config = Arc::new(latest_config);
+
+        thread
+            .update_turn_context_overrides(AgereThreadTurnContextOverrides {
+                provider: Some((model_provider.clone(), provider)),
+                provider_config: Some(Arc::clone(&latest_config)),
+                model: Some(model.clone()),
+                effort: configured_scalars.effort_override(None),
+                summary: configured_scalars.summary_override(None),
+                service_tier: configured_scalars.service_tier_override(None),
+                ..Default::default()
+            })
+            .await
+            .map_err(|err| invalid_request(format!("invalid model provider update: {err}")))?;
+
+        let updated_snapshot = thread.config_snapshot().await;
+        Ok(ThreadProviderUpdateResponse {
+            model: updated_snapshot.model,
+            model_provider,
+            service_tier: updated_snapshot.service_tier,
+            reasoning_effort: updated_snapshot.reasoning_effort,
+            reasoning_summary: updated_snapshot.reasoning_summary,
+        })
+    }
+
     async fn list_collaboration_modes(
         outgoing: Arc<OutgoingMessageSender>,
         thread_manager: Arc<ThreadManager>,
@@ -6232,16 +6357,17 @@ impl AgereMessageProcessor {
             let _access_policy = params.access_policy;
             let permission_profile = params.permission_profile.map(Into::into);
             let model = params.model;
-            let effort = params.effort.map(Some);
+            let effort = params.effort;
             let summary = params.summary;
             let service_tier = params.service_tier;
             let personality = params.personality;
 
             let resolved_provider_override = if provider_changed {
-                let model_provider_id = params
-                    .model_provider
-                    .clone()
-                    .expect("provider_changed implies model_provider is some");
+                let Some(model_provider_id) = params.model_provider.clone() else {
+                    return Err(invalid_request(
+                        "model provider override is required when switching providers",
+                    ));
+                };
                 // Resolve the different provider id against THIS turn's effective cwd.
                 // Same-id `model_provider` values are handled as no-ops above, so cwd
                 // changes do not implicitly reload the current provider. Relative paths
@@ -6271,10 +6397,37 @@ impl AgereMessageProcessor {
                     .ok_or_else(|| {
                         invalid_request(format!("model provider `{model_provider_id}` not found"))
                     })?;
-                Some((model_provider_id, provider, Arc::new(latest_config)))
+                let configured_scalars = ProviderConfiguredScalars::from_config(&latest_config);
+                let model = model
+                    .clone()
+                    .or_else(|| latest_config.model.clone())
+                    .unwrap_or_else(|| config_snapshot.model.clone());
+                Some((
+                    model_provider_id,
+                    provider,
+                    Arc::new(latest_config),
+                    model,
+                    configured_scalars,
+                ))
             } else {
                 None
             };
+            let model = resolved_provider_override
+                .as_ref()
+                .map(|(_, _, _, model, _)| model.clone())
+                .or(model);
+            let effort = resolved_provider_override
+                .as_ref()
+                .map(|(_, _, _, _, scalars)| scalars.effort_override(effort))
+                .unwrap_or(effort);
+            let summary = resolved_provider_override
+                .as_ref()
+                .map(|(_, _, _, _, scalars)| scalars.summary_override(summary))
+                .unwrap_or(summary);
+            let service_tier = resolved_provider_override
+                .as_ref()
+                .map(|(_, _, _, _, scalars)| scalars.service_tier_override(service_tier))
+                .unwrap_or(service_tier);
 
             // If any overrides are provided, validate them synchronously so the
             // request can fail before accepting user input. The actual update is
@@ -6288,13 +6441,13 @@ impl AgereMessageProcessor {
                         permission_profile: permission_profile.clone(),
                         windows_execution_restriction_level: None,
                         provider: resolved_provider_override.as_ref().map(
-                            |(provider_id, provider, _config)| {
+                            |(provider_id, provider, _config, _model, _scalars)| {
                                 (provider_id.clone(), provider.clone())
                             },
                         ),
                         provider_config: resolved_provider_override
                             .as_ref()
-                            .map(|(_, _, config)| Arc::clone(config)),
+                            .map(|(_, _, config, _model, _scalars)| Arc::clone(config)),
                         model: model.clone(),
                         effort,
                         summary,
@@ -6321,27 +6474,28 @@ impl AgereMessageProcessor {
             // echoes carry no marker, and the next real provider switch overwrites this
             // single slot before submitting its own marker op.
             let turn_id = Uuid::now_v7().to_string();
-            let staged_provider_id = if let Some((model_provider_id, provider, latest_config)) =
-                resolved_provider_override
-            {
-                thread
-                    .stage_model_provider(
-                        turn_id.clone(),
-                        model_provider_id.clone(),
-                        provider.clone(),
-                        latest_config,
-                    )
-                    .await;
-                tracing::info!(
-                    id = %model_provider_id,
-                    base_url = ?provider.base_url,
-                    wire_api = ?provider.wire_api,
-                    "PROVIDER_SWITCH staged fresh provider from latest config"
-                );
-                Some(model_provider_id)
-            } else {
-                None
-            };
+            let staged_provider_id =
+                if let Some((model_provider_id, provider, latest_config, _model, _scalars)) =
+                    resolved_provider_override
+                {
+                    thread
+                        .stage_model_provider(
+                            turn_id.clone(),
+                            model_provider_id.clone(),
+                            provider.clone(),
+                            latest_config,
+                        )
+                        .await;
+                    tracing::info!(
+                        id = %model_provider_id,
+                        base_url = ?provider.base_url,
+                        wire_api = ?provider.wire_api,
+                        "PROVIDER_SWITCH staged fresh provider from latest config"
+                    );
+                    Some(model_provider_id)
+                } else {
+                    None
+                };
 
             // Start the turn by submitting the user input. Return its submission id as turn_id.
             let turn_op = if has_any_overrides {
@@ -9467,6 +9621,7 @@ mod tests {
     use agere_model_provider_info::ModelProviderInfo;
     use agere_model_provider_info::WireApi;
     use agere_protocol::ThreadId;
+    use agere_protocol::config_types::ReasoningSummary;
     use agere_protocol::openai_models::ReasoningEffort;
     use agere_protocol::permissions::FileSystemAccessEntry;
     use agere_protocol::permissions::FileSystemAccessMode;
@@ -9826,6 +9981,72 @@ mod tests {
     }
 
     #[test]
+    fn provider_update_only_applies_explicit_model_config_scalars() {
+        let unset_reasoning_effort_config: Option<ReasoningEffort> = None;
+        let unset_reasoning_summary_config: Option<ReasoningSummary> = None;
+        let unset_service_tier_config: Option<agere_protocol::config_types::ServiceTier> = None;
+        let explicit_reasoning_effort_config = Some(ReasoningEffort::High);
+        let explicit_reasoning_summary_config = Some(ReasoningSummary::Detailed);
+        let explicit_service_tier_config = Some(agere_protocol::config_types::ServiceTier::Flex);
+        let unset_summary_override = AgereThreadTurnContextOverrides {
+            effort: apply_configured_scalar(unset_reasoning_effort_config),
+            summary: apply_configured_scalar(unset_reasoning_summary_config),
+            service_tier: apply_configured_scalar(unset_service_tier_config),
+            ..Default::default()
+        };
+        let explicit_summary_override = AgereThreadTurnContextOverrides {
+            effort: apply_configured_scalar(explicit_reasoning_effort_config),
+            summary: apply_configured_scalar(explicit_reasoning_summary_config),
+            service_tier: apply_configured_scalar(explicit_service_tier_config),
+            ..Default::default()
+        };
+
+        assert_eq!(unset_summary_override.effort, None);
+        assert_eq!(unset_summary_override.summary, None);
+        assert_eq!(unset_summary_override.service_tier, None);
+        assert_eq!(
+            explicit_summary_override.effort,
+            Some(Some(ReasoningEffort::High))
+        );
+        assert_eq!(
+            explicit_summary_override.summary,
+            Some(Some(ReasoningSummary::Detailed))
+        );
+        assert_eq!(
+            explicit_summary_override.service_tier,
+            Some(Some(agere_protocol::config_types::ServiceTier::Flex))
+        );
+    }
+
+    #[test]
+    fn provider_config_scalars_fill_omitted_turn_start_overrides() {
+        let configured = ProviderConfiguredScalars {
+            reasoning_effort: Some(ReasoningEffort::High),
+            reasoning_summary: Some(ReasoningSummary::Detailed),
+            service_tier: Some(agere_protocol::config_types::ServiceTier::Flex),
+        };
+
+        assert_eq!(
+            configured.effort_override(None),
+            Some(Some(ReasoningEffort::High))
+        );
+        assert_eq!(
+            configured.summary_override(None),
+            Some(Some(ReasoningSummary::Detailed))
+        );
+        assert_eq!(
+            configured.service_tier_override(None),
+            Some(Some(agere_protocol::config_types::ServiceTier::Flex))
+        );
+        assert_eq!(
+            configured.effort_override(Some(Some(ReasoningEffort::Low))),
+            Some(Some(ReasoningEffort::Low))
+        );
+        assert_eq!(configured.summary_override(Some(None)), Some(None));
+        assert_eq!(configured.service_tier_override(Some(None)), Some(None));
+    }
+
+    #[test]
     fn config_load_error_marks_cloud_requirements_failures_for_relogin() {
         let err = std::io::Error::other(CloudRequirementsLoadError::new(
             CloudRequirementsLoadErrorCode::Auth,
@@ -9979,6 +10200,7 @@ mod tests {
             cwd,
             ephemeral: false,
             reasoning_effort: None,
+            reasoning_summary: None,
             personality: None,
             session_source: SessionSource::Cli,
         };

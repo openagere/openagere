@@ -2911,6 +2911,52 @@ async fn provider_switch_refreshes_model_scalars_from_fresh_config() {
 }
 
 #[tokio::test]
+async fn session_settings_can_clear_reasoning_summary() {
+    let session_configuration = make_session_configuration_for_tests().await;
+    let with_summary = session_configuration
+        .apply(&SessionSettingsUpdate {
+            reasoning_summary: Some(Some(ReasoningSummaryConfig::Detailed)),
+            ..Default::default()
+        })
+        .expect("summary update should apply");
+
+    let cleared = with_summary
+        .apply(&SessionSettingsUpdate {
+            reasoning_summary: Some(None),
+            ..Default::default()
+        })
+        .expect("summary clear should apply");
+
+    assert_eq!(
+        cleared.model_reasoning_summary,
+        Some(ReasoningSummaryConfig::None)
+    );
+}
+
+#[tokio::test]
+async fn session_settings_preserve_reasoning_summary_when_update_omits_summary() {
+    let session_configuration = make_session_configuration_for_tests().await;
+    let with_summary = session_configuration
+        .apply(&SessionSettingsUpdate {
+            reasoning_summary: Some(Some(ReasoningSummaryConfig::Detailed)),
+            ..Default::default()
+        })
+        .expect("summary update should apply");
+
+    let preserved = with_summary
+        .apply(&SessionSettingsUpdate {
+            reasoning_summary: None,
+            ..Default::default()
+        })
+        .expect("omitted summary update should apply");
+
+    assert_eq!(
+        preserved.model_reasoning_summary,
+        Some(ReasoningSummaryConfig::Detailed)
+    );
+}
+
+#[tokio::test]
 async fn per_turn_config_uses_updated_session_provider() {
     let session_configuration = make_session_configuration_for_tests().await;
     let mut next_provider = session_configuration.provider.clone();
@@ -4537,8 +4583,8 @@ async fn user_turn_updates_approvals_reviewer() {
             approvals_reviewer: Some(agere_config::types::ApprovalsReviewer::AutoReview),
             permission_profile: None,
             model: turn_context.model_info.slug.clone(),
-            effort: config.model_reasoning_effort,
-            summary: config.model_reasoning_summary,
+            effort: Some(config.model_reasoning_effort),
+            summary: Some(config.model_reasoning_summary),
             service_tier: None,
             final_output_json_schema: None,
             collaboration_mode: None,
@@ -4551,6 +4597,53 @@ async fn user_turn_updates_approvals_reviewer() {
     assert_eq!(
         state.session_configuration.approvals_reviewer,
         agere_config::types::ApprovalsReviewer::AutoReview
+    );
+}
+
+#[tokio::test]
+async fn user_turn_preserves_reasoning_effort_when_effort_is_omitted() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let config = session.get_config().await;
+
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.collaboration_mode = state
+            .session_configuration
+            .collaboration_mode
+            .with_updates(None, Some(Some(ReasoningEffortConfig::High)), None);
+    }
+
+    handlers::user_input_or_turn(
+        &session,
+        "sub-1".to_string(),
+        Op::UserTurn {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "hello".to_string(),
+                text_elements: Vec::new(),
+            }],
+            cwd: config.cwd.to_path_buf(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
+            permission_profile: None,
+            model: turn_context.model_info.slug.clone(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            final_output_json_schema: None,
+            collaboration_mode: None,
+            personality: config.personality,
+        },
+    )
+    .await;
+
+    let state = session.state.lock().await;
+    assert_eq!(
+        state
+            .session_configuration
+            .collaboration_mode
+            .reasoning_effort(),
+        Some(ReasoningEffortConfig::High)
     );
 }
 

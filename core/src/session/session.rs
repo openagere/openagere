@@ -143,6 +143,7 @@ impl SessionConfiguration {
             cwd: self.cwd.clone(),
             ephemeral: self.original_config_do_not_use.ephemeral,
             reasoning_effort: self.collaboration_mode.reasoning_effort(),
+            reasoning_summary: self.model_reasoning_summary,
             personality: self.personality,
             session_source: self.session_source.clone(),
         }
@@ -180,7 +181,8 @@ impl SessionConfiguration {
             next_configuration.collaboration_mode = collaboration_mode;
         }
         if let Some(summary) = updates.reasoning_summary {
-            next_configuration.model_reasoning_summary = Some(summary);
+            next_configuration.model_reasoning_summary =
+                Some(summary.unwrap_or(ReasoningSummaryConfig::None));
         }
         if let Some(service_tier) = updates.service_tier {
             next_configuration.service_tier = service_tier;
@@ -271,7 +273,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) permission_profile: Option<PermissionProfile>,
     pub(crate) windows_execution_restriction_level: Option<WindowsExecutionRestrictionLevel>,
     pub(crate) collaboration_mode: Option<CollaborationMode>,
-    pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
+    pub(crate) reasoning_summary: Option<Option<ReasoningSummaryConfig>>,
     pub(crate) service_tier: Option<Option<ServiceTier>>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
     /// Turn-local environment override. `None` inherits the sticky thread

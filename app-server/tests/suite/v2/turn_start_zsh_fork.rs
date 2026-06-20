@@ -126,8 +126,8 @@ async fn turn_start_shell_zsh_fork_executes_command_v2() -> Result<()> {
             approval_policy: Some(agere_app_server_protocol::AskForApproval::Never),
             access_policy: Some(agere_app_server_protocol::AccessPolicy::DangerFullAccess),
             model: Some("mock-model".to_string()),
-            effort: Some(agere_protocol::openai_models::ReasoningEffort::Medium),
-            summary: Some(agere_protocol::config_types::ReasoningSummary::Auto),
+            effort: Some(Some(agere_protocol::openai_models::ReasoningEffort::Medium)),
+            summary: Some(Some(agere_protocol::config_types::ReasoningSummary::Auto)),
             ..Default::default()
         })
         .await?;
@@ -545,8 +545,8 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
                 exclude_slash_tmp: false,
             }),
             model: Some("mock-model".to_string()),
-            effort: Some(agere_protocol::openai_models::ReasoningEffort::Medium),
-            summary: Some(agere_protocol::config_types::ReasoningSummary::Auto),
+            effort: Some(Some(agere_protocol::openai_models::ReasoningEffort::Medium)),
+            summary: Some(Some(agere_protocol::config_types::ReasoningSummary::Auto)),
             ..Default::default()
         })
         .await?;

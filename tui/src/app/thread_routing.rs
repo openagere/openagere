@@ -160,6 +160,57 @@ impl App {
         self.active_thread_id.or(self.chat_widget.thread_id())
     }
 
+    pub(super) fn stage_provider_switch_for_displayed_thread(&mut self, model_provider_id: String) {
+        let Some(thread_id) = self.current_displayed_thread_id() else {
+            return;
+        };
+        self.pending_provider_switch = Some(PendingProviderSwitch {
+            thread_id,
+            model_provider_id,
+        });
+    }
+
+    pub(super) fn provider_override_for_turn(&self, thread_id: ThreadId) -> Option<String> {
+        self.pending_provider_switch
+            .as_ref()
+            .filter(|pending| pending.thread_id == thread_id)
+            .map(|pending| pending.model_provider_id.clone())
+    }
+
+    pub(super) fn clear_provider_override_for_turn(
+        &mut self,
+        thread_id: ThreadId,
+        model_provider_id: &str,
+    ) {
+        if self
+            .pending_provider_switch
+            .as_ref()
+            .is_some_and(|pending| {
+                pending.thread_id == thread_id && pending.model_provider_id == model_provider_id
+            })
+        {
+            self.pending_provider_switch = None;
+        }
+    }
+
+    pub(super) fn clear_pending_provider_switch_for_displayed_thread(
+        &mut self,
+        model_provider_id: &str,
+    ) {
+        let Some(thread_id) = self.current_displayed_thread_id() else {
+            return;
+        };
+        if self
+            .pending_provider_switch
+            .as_ref()
+            .is_some_and(|pending| {
+                pending.thread_id == thread_id && pending.model_provider_id == model_provider_id
+            })
+        {
+            self.pending_provider_switch = None;
+        }
+    }
+
     pub(super) fn ignore_same_thread_resume(
         &mut self,
         target_session: &crate::resume_picker::SessionTarget,
@@ -605,6 +656,8 @@ impl App {
                     }
                 }
                 if should_start_turn {
+                    let model_provider = self.provider_override_for_turn(thread_id);
+                    let model_provider_to_clear = model_provider.clone();
                     app_server
                         .turn_start(
                             thread_id,
@@ -615,7 +668,7 @@ impl App {
                                 .unwrap_or(self.chat_widget.config_ref().approvals_reviewer),
                             permission_profile.clone(),
                             model.to_string(),
-                            self.chat_widget.config_ref().model_provider_id.clone(),
+                            model_provider,
                             effort,
                             *summary,
                             *service_tier,
@@ -624,6 +677,9 @@ impl App {
                             final_output_json_schema.clone(),
                         )
                         .await?;
+                    if let Some(model_provider) = model_provider_to_clear.as_deref() {
+                        self.clear_provider_override_for_turn(thread_id, model_provider);
+                    }
                 }
                 Ok(true)
             }

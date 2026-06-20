@@ -72,7 +72,7 @@ fn read_only_text_turn_with_personality(
         approvals_reviewer: None,
         permission_profile,
         model,
-        effort: test.config.model_reasoning_effort,
+        effort: Some(test.config.model_reasoning_effort),
         summary: None,
         service_tier: None,
         collaboration_mode: None,

@@ -507,6 +507,12 @@ struct InitialHistoryReplayBuffer {
     retained_lines: VecDeque<Line<'static>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingProviderSwitch {
+    thread_id: ThreadId,
+    model_provider_id: String,
+}
+
 pub(crate) struct App {
     model_catalog: Arc<ModelCatalog>,
     pub(crate) session_telemetry: SessionTelemetry,
@@ -565,6 +571,7 @@ pub(crate) struct App {
     /// This is thread-scoped state (`Option<ThreadId>`) instead of a global bool
     /// so shutdown events from other threads still take the normal failover path.
     pending_shutdown_exit_thread_id: Option<ThreadId>,
+    pending_provider_switch: Option<PendingProviderSwitch>,
 
     windows_restriction: WindowsRestrictionState,
 
@@ -964,6 +971,7 @@ See the Agere keymap documentation for supported actions and examples."
             remote_app_server_auth_token,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
+            pending_provider_switch: None,
             windows_restriction: WindowsRestrictionState::default(),
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),

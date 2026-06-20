@@ -48,7 +48,7 @@ fn disabled_text_turn(test: &TestAgere, text: &str) -> Op {
         approvals_reviewer: None,
         permission_profile,
         model: REQUESTED_MODEL.to_string(),
-        effort: test.config.model_reasoning_effort,
+        effort: Some(test.config.model_reasoning_effort),
         summary: None,
         service_tier: None,
         collaboration_mode: None,

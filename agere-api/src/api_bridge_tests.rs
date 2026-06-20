@@ -203,6 +203,61 @@ fn map_api_error_maps_transient_429_to_rate_limited() {
 }
 
 #[test]
+fn map_api_error_clamps_huge_retry_after_header_to_one_day() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::RETRY_AFTER,
+        http::HeaderValue::from_static("9999999999999999999"),
+    );
+    let body = serde_json::json!({
+        "error": {
+            "type": "rate_limit_exceeded",
+            "code": "rate_limit_exceeded",
+            "message": "too many requests"
+        }
+    })
+    .to_string();
+
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: Some(headers),
+        body: Some(body),
+    }));
+
+    let AgereErr::RateLimited(rate_limited) = err else {
+        panic!("expected AgereErr::RateLimited, got {err:?}");
+    };
+    assert_eq!(
+        rate_limited.retry_after,
+        Some(std::time::Duration::from_secs(60 * 60 * 24))
+    );
+}
+
+#[test]
+fn parse_rate_limit_resets_at_treats_standard_reset_headers_as_relative_seconds() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-agere-primary-reset-at",
+        http::HeaderValue::from_static("4102444800"),
+    );
+    headers.insert("x-ratelimit-reset", http::HeaderValue::from_static("60"));
+
+    let before = Utc::now();
+    let resets_at = parse_rate_limit_resets_at(&headers).expect("reset hint");
+    let after = Utc::now();
+
+    assert!(
+        resets_at >= before + chrono::Duration::seconds(60),
+        "expected reset at least 60 seconds from start, got {resets_at}"
+    );
+    assert!(
+        resets_at <= after + chrono::Duration::seconds(60),
+        "expected reset about 60 seconds from end, got {resets_at}"
+    );
+}
+
+#[test]
 fn map_api_error_maps_insufficient_quota_429_to_terminal_quota_error() {
     let body = serde_json::json!({
         "error": {

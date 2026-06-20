@@ -32,6 +32,7 @@ const X_REASONING_INCLUDED_HEADER: &str = "x-reasoning-included";
 const OPENAI_MODEL_HEADER: &str = "openai-model";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION: &str = "trusted_access_for_cyber";
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(60 * 60 * 24);
 
 /// Streams SSE events from an on-disk fixture for tests.
 pub fn stream_from_fixture(
@@ -556,13 +557,23 @@ fn try_parse_retry_after(err: &Error) -> Option<Duration> {
             let unit = unit.as_str().to_ascii_lowercase();
 
             if unit == "s" || unit.starts_with("second") {
-                return Some(Duration::from_secs_f64(value));
+                return retry_after_from_secs_f64(value);
             } else if unit == "ms" {
-                return Some(Duration::from_millis(value as u64));
+                return retry_after_from_secs_f64(value / 1000.0);
             }
         }
     }
     None
+}
+
+fn retry_after_from_secs_f64(seconds: f64) -> Option<Duration> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    if seconds >= MAX_RETRY_AFTER.as_secs_f64() {
+        return Some(MAX_RETRY_AFTER);
+    }
+    Some(Duration::from_secs_f64(seconds))
 }
 
 fn is_context_window_error(error: &Error) -> bool {
@@ -1433,6 +1444,21 @@ mod tests {
         };
         let delay = try_parse_retry_after(&err);
         assert_eq!(delay, Some(Duration::from_secs(35)));
+    }
+
+    #[test]
+    fn test_try_parse_retry_after_clamps_large_values_to_one_day() {
+        let err = Error {
+            r#type: None,
+            message: Some(
+                "Rate limit exceeded. Try again in 9999999999999999999 seconds.".to_string(),
+            ),
+            code: Some("rate_limit_exceeded".to_string()),
+            plan_type: None,
+            resets_at: None,
+        };
+        let delay = try_parse_retry_after(&err);
+        assert_eq!(delay, Some(Duration::from_secs(60 * 60 * 24)));
     }
 
     const CYBER_RESTRICTED_MODEL_FOR_TESTS: &str = "gpt-5.3";

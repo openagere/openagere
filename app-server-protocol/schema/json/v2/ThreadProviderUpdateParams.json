@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "modelProvider": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "modelProvider",
+    "threadId"
+  ],
+  "title": "ThreadProviderUpdateParams",
+  "type": "object"
+}

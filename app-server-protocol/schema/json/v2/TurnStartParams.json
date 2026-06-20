@@ -817,7 +817,14 @@
     "effort": {
       "anyOf": [
         {
-          "$ref": "#/definitions/ReasoningEffort"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         {
           "type": "null"
@@ -880,7 +887,14 @@
     "summary": {
       "anyOf": [
         {
-          "$ref": "#/definitions/ReasoningSummary"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         {
           "type": "null"

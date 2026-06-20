@@ -683,7 +683,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         model: None,
                         model_provider: None,
                         service_tier: None,
-                        effort: default_effort,
+                        effort: Some(default_effort),
                         summary: None,
                         personality: None,
                         output_schema,

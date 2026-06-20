@@ -62,9 +62,6 @@ use agere_protocol::request_permissions::RequestPermissionsResponse;
 use agere_protocol::request_user_input::RequestUserInputResponse;
 
 use crate::context_manager::is_user_turn_boundary;
-use agere_protocol::config_types::CollaborationMode;
-use agere_protocol::config_types::ModeKind;
-use agere_protocol::config_types::Settings;
 use agere_protocol::dynamic_tools::DynamicToolResponse;
 use agere_protocol::items::UserMessageItem;
 use agere_protocol::mcp::RequestId as ProtocolRequestId;
@@ -143,16 +140,16 @@ pub(super) async fn user_input_or_turn_inner(
             personality,
             environments,
         } => {
-            let collaboration_mode = collaboration_mode.or_else(|| {
-                Some(CollaborationMode {
-                    mode: ModeKind::Default,
-                    settings: Settings {
-                        model: model.clone(),
-                        reasoning_effort: effort,
-                        developer_instructions: None,
-                    },
-                })
-            });
+            let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
+                Some(collab_mode)
+            } else {
+                let state = sess.state.lock().await;
+                Some(state.session_configuration.collaboration_mode.with_updates(
+                    Some(model.clone()),
+                    effort,
+                    /*developer_instructions*/ None,
+                ))
+            };
             (
                 items,
                 SessionSettingsUpdate {

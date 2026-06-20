@@ -36,10 +36,10 @@ modelProvider?: string | null, /**
 serviceTier?: ServiceTier | null | null, /**
  * Override the reasoning effort for this turn and subsequent turns.
  */
-effort?: ReasoningEffort | null, /**
+effort?: ReasoningEffort | null | null, /**
  * Override the reasoning summary for this turn and subsequent turns.
  */
-summary?: ReasoningSummary | null, /**
+summary?: ReasoningSummary | null | null, /**
  * Override the personality for this turn and subsequent turns.
  */
 personality?: Personality | null, /**

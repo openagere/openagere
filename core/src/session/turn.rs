@@ -1134,7 +1134,7 @@ async fn run_sampling_request(
 
         // Use the configured provider-specific stream retry budget.
         let max_retries = turn_context.provider.info().stream_max_retries();
-        if retries >= max_retries
+        if should_try_fallback_transport(&err, retries, max_retries)
             && client_session.try_switch_fallback_transport(
                 &turn_context.session_telemetry,
                 &turn_context.model_info,
@@ -1220,6 +1220,7 @@ async fn run_sampling_request(
                     )
                     .await
                     {
+                        retries = 0;
                         continue;
                     }
                     return Err(AgereErr::TurnAborted);
@@ -1228,6 +1229,10 @@ async fn run_sampling_request(
             }
         }
     }
+}
+
+fn should_try_fallback_transport(err: &AgereErr, retries: u64, max_retries: u64) -> bool {
+    !matches!(err, AgereErr::RateLimited(_)) && retries >= max_retries
 }
 
 #[expect(
@@ -2531,6 +2536,39 @@ mod downshift_tests {
             /*old_model*/ "gpt-5", /*new_model*/ "gpt-5", /*old_provider*/ "",
             /*new_provider*/ "openai", /*old_window*/ 1_000_000,
             /*new_window*/ 256_000,
+        ));
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::should_try_fallback_transport;
+    use agere_protocol::error::AgereErr;
+    use agere_protocol::error::RateLimitedError;
+    use reqwest::StatusCode;
+    use std::time::Duration;
+
+    #[test]
+    fn rate_limited_does_not_trigger_fallback_transport() {
+        let err = AgereErr::RateLimited(RateLimitedError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: "slow down".to_string(),
+            retry_after: Some(Duration::from_secs(60)),
+            resets_at: None,
+            request_id: None,
+        });
+
+        assert!(!should_try_fallback_transport(
+            &err, /*retries*/ 2, /*max_retries*/ 2,
+        ));
+    }
+
+    #[test]
+    fn stream_error_triggers_fallback_transport_after_retry_budget() {
+        let err = AgereErr::Stream("connection closed".to_string(), None);
+
+        assert!(should_try_fallback_transport(
+            &err, /*retries*/ 2, /*max_retries*/ 2,
         ));
     }
 }

@@ -52,6 +52,7 @@ pub struct ThreadConfigSnapshot {
     pub cwd: AbsolutePathBuf,
     pub ephemeral: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
+    pub reasoning_summary: Option<ReasoningSummary>,
     pub personality: Option<Personality>,
     pub session_source: SessionSource,
 }
@@ -76,7 +77,7 @@ pub struct AgereThreadTurnContextOverrides {
     pub provider_config: Option<std::sync::Arc<crate::config::Config>>,
     pub model: Option<String>,
     pub effort: Option<Option<ReasoningEffort>>,
-    pub summary: Option<ReasoningSummary>,
+    pub summary: Option<Option<ReasoningSummary>>,
     pub service_tier: Option<Option<ServiceTier>>,
     pub collaboration_mode: Option<CollaborationMode>,
     pub personality: Option<Personality>,
@@ -270,6 +271,53 @@ impl AgereThread {
             ..Default::default()
         };
         self.agere.session.validate_settings(&updates).await
+    }
+
+    /// Apply persistent turn context settings to the loaded thread runtime.
+    pub async fn update_turn_context_overrides(
+        &self,
+        overrides: AgereThreadTurnContextOverrides,
+    ) -> ConstraintResult<()> {
+        let AgereThreadTurnContextOverrides {
+            cwd,
+            approval_policy,
+            approvals_reviewer,
+            permission_profile,
+            windows_execution_restriction_level,
+            provider,
+            provider_config,
+            model,
+            effort,
+            summary,
+            service_tier,
+            collaboration_mode,
+            personality,
+        } = overrides;
+        let collaboration_mode = if let Some(collaboration_mode) = collaboration_mode {
+            collaboration_mode
+        } else {
+            self.agere
+                .session
+                .collaboration_mode()
+                .await
+                .with_updates(model, effort, /*developer_instructions*/ None)
+        };
+
+        let updates = SessionSettingsUpdate {
+            cwd,
+            approval_policy,
+            approvals_reviewer,
+            permission_profile,
+            windows_execution_restriction_level,
+            provider,
+            provider_config,
+            collaboration_mode: Some(collaboration_mode),
+            reasoning_summary: summary,
+            service_tier,
+            personality,
+            ..Default::default()
+        };
+        self.agere.session.update_settings(updates).await
     }
 
     /// Use sparingly: this is intended to be removed soon.

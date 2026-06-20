@@ -57,7 +57,7 @@ async fn request_user_input_round_trip() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             model: Some("mock-model".to_string()),
-            effort: Some(ReasoningEffort::Medium),
+            effort: Some(Some(ReasoningEffort::Medium)),
             collaboration_mode: Some(CollaborationMode {
                 mode: ModeKind::Plan,
                 settings: Settings {

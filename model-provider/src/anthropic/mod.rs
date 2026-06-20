@@ -116,17 +116,14 @@ impl ModelProvider for AnthropicModelProvider {
         config_model_catalog: Option<ModelsResponse>,
         collaboration_modes_config: CollaborationModesConfig,
     ) -> SharedModelsManager {
-        let catalog = config_model_catalog.or_else(|| {
-            if self.config_models.is_empty() {
-                // Fall back to bundled models.json for online logic
-                agere_models_manager::bundled_models_response().ok()
-            } else {
-                Some(crate::model_catalog::build_models_response(
-                    &self.config_models,
-                    self.info.wire_api,
-                ))
-            }
-        });
+        let catalog = if self.config_models.is_empty() {
+            config_model_catalog.or_else(|| agere_models_manager::bundled_models_response().ok())
+        } else {
+            Some(crate::model_catalog::build_models_response(
+                &self.config_models,
+                self.info.wire_api,
+            ))
+        };
         Arc::new(StaticModelsManager::new(
             /*auth_manager*/ None,
             catalog.unwrap_or_else(|| ModelsResponse { models: vec![] }),
@@ -193,5 +190,35 @@ mod tests {
                 .iter()
                 .any(|m| m.used_fallback_model_metadata)
         );
+    }
+
+    #[tokio::test]
+    async fn models_manager_prefers_config_models_over_external_catalog() {
+        let config_models = vec![agere_config::config_toml::ModelConfig {
+            name: "qwen3.7-plus".to_string(),
+            context_window: Some(1_000_000),
+        }];
+        let provider = AnthropicModelProvider::new(
+            ModelProviderInfo {
+                wire_api: WireApi::Anthropic,
+                ..Default::default()
+            },
+            config_models,
+        );
+
+        let mgr = provider.models_manager(
+            PathBuf::new(),
+            Some(ModelsResponse { models: Vec::new() }),
+            Default::default(),
+        );
+
+        let info = mgr
+            .get_model_info(
+                "qwen3.7-plus",
+                &agere_models_manager::ModelsManagerConfig::default(),
+            )
+            .await;
+        assert_eq!(info.context_window, Some(1_000_000));
+        assert!(!info.used_fallback_model_metadata);
     }
 }

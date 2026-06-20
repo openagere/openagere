@@ -50,7 +50,7 @@ fn read_only_user_turn(test: &TestAgere, items: Vec<UserInput>, model: String) -
         approvals_reviewer: None,
         permission_profile,
         model,
-        effort: test.config.model_reasoning_effort,
+        effort: Some(test.config.model_reasoning_effort),
         summary: None,
         service_tier: None,
         collaboration_mode: None,

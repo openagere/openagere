@@ -1261,7 +1261,7 @@ fn live_elicitation_timeout_pause(
         }],
         approval_policy: Some(AskForApproval::Never),
         access_policy: Some(AccessPolicy::DangerFullAccess),
-        effort: Some(ReasoningEffort::High),
+        effort: Some(Some(ReasoningEffort::High)),
         cwd: Some(workspace),
         ..Default::default()
     })?;

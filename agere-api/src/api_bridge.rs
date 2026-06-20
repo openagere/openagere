@@ -208,6 +208,7 @@ const CYBER_POLICY_ERROR_CODE: &str = "cyber_policy";
 const CYBER_POLICY_FALLBACK_MESSAGE: &str =
     "This request has been flagged for possible cybersecurity risk.";
 const RECOVERABLE_RATE_LIMIT_ERROR_CODES: &[&str] = &[];
+const MAX_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60 * 60 * 24);
 
 #[cfg(test)]
 #[path = "api_bridge_tests.rs"]
@@ -243,15 +244,15 @@ fn parse_retry_after_header(headers: &HeaderMap) -> Option<std::time::Duration> 
         return None;
     }
     if let Ok(secs) = raw.parse::<u64>() {
-        if secs == 0 {
-            return None;
-        }
-        return Some(std::time::Duration::from_secs(secs));
+        return retry_after_from_secs(secs);
     }
     if let Ok(seconds) = raw.parse::<f64>()
         && seconds.is_finite()
         && seconds > 0.0
     {
+        if seconds >= MAX_RETRY_AFTER.as_secs_f64() {
+            return Some(MAX_RETRY_AFTER);
+        }
         return Some(std::time::Duration::from_secs_f64(seconds));
     }
     let parsed = DateTime::parse_from_rfc2822(raw)
@@ -259,29 +260,45 @@ fn parse_retry_after_header(headers: &HeaderMap) -> Option<std::time::Duration> 
         .or_else(|_| DateTime::parse_from_rfc3339(raw).map(|dt| dt.with_timezone(&Utc)))
         .ok()?;
     let delta = parsed.signed_duration_since(Utc::now()).num_seconds();
-    (delta > 0).then(|| std::time::Duration::from_secs(delta as u64))
+    (delta > 0)
+        .then(|| u64::try_from(delta).ok())
+        .flatten()
+        .and_then(retry_after_from_secs)
 }
 
-/// Read the soonest reset hint from the standard rate-limit header families.
-/// Values are unix seconds, matching what the Agere backend returns; the
-/// helper picks the earliest valid timestamp so the slow-retry policy waits
-/// only as long as necessary.
+fn retry_after_from_secs(secs: u64) -> Option<std::time::Duration> {
+    if secs == 0 {
+        return None;
+    }
+    Some(std::time::Duration::from_secs(
+        secs.min(MAX_RETRY_AFTER.as_secs()),
+    ))
+}
+
+/// Read the soonest reset hint from the rate-limit header families.
+///
+/// Agere reset headers use absolute Unix seconds. Standard rate-limit reset
+/// headers use relative seconds until reset.
 fn parse_rate_limit_resets_at(headers: &HeaderMap) -> Option<DateTime<Utc>> {
-    const HEADERS: &[&str] = &[
-        "x-agere-primary-reset-at",
-        "x-agere-secondary-reset-at",
+    const ABSOLUTE_HEADERS: &[&str] = &["x-agere-primary-reset-at", "x-agere-secondary-reset-at"];
+    const RELATIVE_HEADERS: &[&str] = &[
         "x-ratelimit-reset",
         "x-ratelimit-reset-requests",
         "x-ratelimit-reset-tokens",
     ];
-    HEADERS
-        .iter()
-        .filter_map(|name| {
-            let raw = headers.get(*name)?.to_str().ok()?.trim();
-            let seconds = raw.parse::<i64>().ok()?;
-            DateTime::<Utc>::from_timestamp(seconds, 0)
-        })
-        .min()
+
+    let absolute_resets = ABSOLUTE_HEADERS.iter().filter_map(|name| {
+        let raw = headers.get(*name)?.to_str().ok()?.trim();
+        let seconds = raw.parse::<i64>().ok()?;
+        DateTime::<Utc>::from_timestamp(seconds, 0)
+    });
+    let relative_resets = RELATIVE_HEADERS.iter().filter_map(|name| {
+        let raw = headers.get(*name)?.to_str().ok()?.trim();
+        let seconds = raw.parse::<i64>().ok()?;
+        (seconds > 0).then(|| Utc::now() + chrono::Duration::seconds(seconds))
+    });
+
+    absolute_resets.chain(relative_resets).min()
 }
 
 fn rate_limit_error_code(response: &RateLimitErrorResponse) -> Option<&str> {

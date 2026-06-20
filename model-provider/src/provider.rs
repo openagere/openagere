@@ -209,13 +209,8 @@ impl ModelProvider for ConfiguredModelProvider {
         config_model_catalog: Option<ModelsResponse>,
         collaboration_modes_config: CollaborationModesConfig,
     ) -> SharedModelsManager {
-        match config_model_catalog {
-            Some(model_catalog) => Arc::new(StaticModelsManager::new(
-                self.auth_manager.clone(),
-                model_catalog,
-                collaboration_modes_config,
-            )),
-            None if !self.config_models.is_empty() => {
+        match (config_model_catalog, self.config_models.is_empty()) {
+            (_, false) => {
                 let catalog = crate::model_catalog::build_models_response(
                     &self.config_models,
                     self.info.wire_api,
@@ -226,7 +221,12 @@ impl ModelProvider for ConfiguredModelProvider {
                     collaboration_modes_config,
                 ))
             }
-            None => {
+            (Some(model_catalog), true) => Arc::new(StaticModelsManager::new(
+                self.auth_manager.clone(),
+                model_catalog,
+                collaboration_modes_config,
+            )),
+            (None, true) => {
                 let endpoint = Arc::new(OpenAiModelsEndpoint::new(
                     self.info.clone(),
                     self.auth_manager.clone(),
@@ -510,6 +510,33 @@ mod tests {
 
         assert_eq!(catalog.models.len(), 1);
         assert_eq!(catalog.models[0].slug, "custom-bedrock-model");
+    }
+
+    #[tokio::test]
+    async fn configured_provider_prefers_config_models_over_external_catalog() {
+        let provider = create_model_provider(
+            provider_for("https://example.test".to_string()),
+            /*auth_manager*/ None,
+            vec![ModelConfig {
+                name: "custom-provider-model".to_string(),
+                context_window: Some(1_000_000),
+            }],
+        );
+        let manager = provider.models_manager(
+            test_agere_home(),
+            Some(ModelsResponse { models: Vec::new() }),
+            Default::default(),
+        );
+
+        let info = manager
+            .get_model_info(
+                "custom-provider-model",
+                &agere_models_manager::ModelsManagerConfig::default(),
+            )
+            .await;
+
+        assert_eq!(info.context_window, Some(1_000_000));
+        assert!(!info.used_fallback_model_metadata);
     }
 
     #[tokio::test]

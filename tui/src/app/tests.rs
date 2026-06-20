@@ -1296,7 +1296,7 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
                 }]
             );
             assert_eq!(model, "gpt-restored".to_string());
-            assert_eq!(effort, Some(ReasoningEffortConfig::High));
+            assert_eq!(effort, Some(Some(ReasoningEffortConfig::High)));
             assert_eq!(
                 collaboration_mode,
                 Some(CollaborationMode {
@@ -3909,6 +3909,48 @@ async fn clear_ui_header_shows_fast_status_for_fast_capable_models() {
     assert_app_snapshot!("clear_ui_header_fast_status_fast_capable_models", rendered);
 }
 
+#[tokio::test]
+async fn provider_override_for_turn_is_absent_without_explicit_switch() {
+    let mut app = make_test_app().await;
+    let thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000601").expect("valid thread");
+    app.active_thread_id = Some(thread_id);
+    app.config.model_provider_id = "new-global-provider".to_string();
+
+    assert_eq!(app.provider_override_for_turn(thread_id), None);
+}
+
+#[tokio::test]
+async fn provider_override_for_turn_is_thread_scoped_until_cleared() {
+    let mut app = make_test_app().await;
+    let switched_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000602").expect("valid thread");
+    let other_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000603").expect("valid thread");
+    app.active_thread_id = Some(switched_thread_id);
+
+    app.stage_provider_switch_for_displayed_thread("explicit-provider".to_string());
+
+    assert_eq!(app.provider_override_for_turn(other_thread_id), None);
+    assert_eq!(
+        app.provider_override_for_turn(switched_thread_id),
+        Some("explicit-provider".to_string())
+    );
+    assert_eq!(
+        app.provider_override_for_turn(switched_thread_id),
+        Some("explicit-provider".to_string())
+    );
+
+    app.clear_provider_override_for_turn(switched_thread_id, "other-provider");
+    assert_eq!(
+        app.provider_override_for_turn(switched_thread_id),
+        Some("explicit-provider".to_string())
+    );
+
+    app.clear_provider_override_for_turn(switched_thread_id, "explicit-provider");
+    assert_eq!(app.provider_override_for_turn(switched_thread_id), None);
+}
+
 async fn make_test_app() -> App {
     let (chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
     let config = chat_widget.config_ref().clone();
@@ -3948,6 +3990,7 @@ async fn make_test_app() -> App {
         remote_app_server_auth_token: None,
         pending_update_action: None,
         pending_shutdown_exit_thread_id: None,
+        pending_provider_switch: None,
         windows_restriction: WindowsRestrictionState::default(),
         thread_event_channels: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
@@ -4008,6 +4051,7 @@ async fn make_test_app_with_channels() -> (
             remote_app_server_auth_token: None,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
+            pending_provider_switch: None,
             windows_restriction: WindowsRestrictionState::default(),
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),

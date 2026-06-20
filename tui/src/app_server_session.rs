@@ -67,6 +67,8 @@ use agere_app_server_protocol::ThreadLoadedListResponse;
 use agere_app_server_protocol::ThreadMemoryMode;
 use agere_app_server_protocol::ThreadMemoryModeSetParams;
 use agere_app_server_protocol::ThreadMemoryModeSetResponse;
+use agere_app_server_protocol::ThreadProviderUpdateParams;
+use agere_app_server_protocol::ThreadProviderUpdateResponse;
 use agere_app_server_protocol::ThreadReadParams;
 use agere_app_server_protocol::ThreadReadResponse;
 use agere_app_server_protocol::ThreadRealtimeAppendAudioParams;
@@ -178,7 +180,7 @@ pub(crate) struct ThreadSessionState {
     pub(crate) rollout_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ThreadParamsMode {
     Embedded,
     Remote,
@@ -192,9 +194,9 @@ impl ThreadParamsMode {
         }
     }
 
-    fn model_provider_override(self, model_provider: String) -> Option<String> {
+    fn model_provider_override(self, model_provider: Option<String>) -> Option<String> {
         match self {
-            Self::Embedded => Some(model_provider),
+            Self::Embedded => model_provider,
             Self::Remote => None,
         }
     }
@@ -467,6 +469,10 @@ impl AppServerSession {
         }
     }
 
+    pub(crate) fn provider_updates_apply_locally(&self) -> bool {
+        self.thread_params_mode() == ThreadParamsMode::Embedded
+    }
+
     async fn fork_parent_title_from_app_server(
         &mut self,
         forked_from_id: Option<&str>,
@@ -539,6 +545,24 @@ impl AppServerSession {
         Ok(response.thread)
     }
 
+    pub(crate) async fn thread_provider_update(
+        &mut self,
+        thread_id: ThreadId,
+        model_provider: String,
+    ) -> Result<ThreadProviderUpdateResponse> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed(ClientRequest::ThreadProviderUpdate {
+                request_id,
+                params: ThreadProviderUpdateParams {
+                    thread_id: thread_id.to_string(),
+                    model_provider,
+                },
+            })
+            .await
+            .wrap_err("thread/provider/update failed after provider switch")
+    }
+
     pub(crate) async fn thread_inject_items(
         &mut self,
         thread_id: ThreadId,
@@ -572,9 +596,9 @@ impl AppServerSession {
         approvals_reviewer: agere_protocol::config_types::ApprovalsReviewer,
         permission_profile: PermissionProfile,
         model: String,
-        model_provider: String,
-        effort: Option<agere_protocol::openai_models::ReasoningEffort>,
-        summary: Option<agere_protocol::config_types::ReasoningSummary>,
+        model_provider: Option<String>,
+        effort: Option<Option<agere_protocol::openai_models::ReasoningEffort>>,
+        summary: Option<Option<agere_protocol::config_types::ReasoningSummary>>,
         service_tier: Option<Option<agere_protocol::config_types::ServiceTier>>,
         collaboration_mode: Option<agere_protocol::config_types::CollaborationMode>,
         personality: Option<agere_protocol::config_types::Personality>,
@@ -1792,11 +1816,15 @@ mod tests {
             None
         );
         assert_eq!(
-            ThreadParamsMode::Embedded.model_provider_override("local-provider".to_string()),
+            ThreadParamsMode::Embedded.model_provider_override(Some("local-provider".to_string())),
             Some("local-provider".to_string())
         );
         assert_eq!(
-            ThreadParamsMode::Remote.model_provider_override("local-provider".to_string()),
+            ThreadParamsMode::Embedded.model_provider_override(None),
+            None
+        );
+        assert_eq!(
+            ThreadParamsMode::Remote.model_provider_override(Some("local-provider".to_string())),
             None
         );
     }

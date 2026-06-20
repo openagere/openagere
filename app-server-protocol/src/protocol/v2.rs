@@ -3536,6 +3536,25 @@ pub struct MockExperimentalMethodResponse {
     pub echoed: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadProviderUpdateParams {
+    pub thread_id: String,
+    pub model_provider: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadProviderUpdateResponse {
+    pub model: String,
+    pub model_provider: String,
+    pub service_tier: Option<ServiceTier>,
+    pub reasoning_effort: Option<ReasoningEffort>,
+    pub reasoning_summary: Option<ReasoningSummary>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -5334,11 +5353,23 @@ pub struct TurnStartParams {
     #[ts(optional = nullable)]
     pub service_tier: Option<Option<ServiceTier>>,
     /// Override the reasoning effort for this turn and subsequent turns.
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_double_option",
+        serialize_with = "super::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[ts(optional = nullable)]
-    pub effort: Option<ReasoningEffort>,
+    pub effort: Option<Option<ReasoningEffort>>,
     /// Override the reasoning summary for this turn and subsequent turns.
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_double_option",
+        serialize_with = "super::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[ts(optional = nullable)]
-    pub summary: Option<ReasoningSummary>,
+    pub summary: Option<Option<ReasoningSummary>>,
     /// Override the personality for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub personality: Option<Personality>,
@@ -10763,6 +10794,18 @@ mod tests {
     }
 
     #[test]
+    fn thread_provider_update_params_accept_camel_case_provider() {
+        let params: ThreadProviderUpdateParams = serde_json::from_value(json!({
+            "threadId": "thread_123",
+            "modelProvider": "next-provider"
+        }))
+        .expect("params should deserialize");
+
+        assert_eq!(params.thread_id, "thread_123");
+        assert_eq!(params.model_provider, "next-provider");
+    }
+
+    #[test]
     fn turn_start_params_preserve_explicit_null_service_tier() {
         let params: TurnStartParams = serde_json::from_value(json!({
             "threadId": "thread_123",
@@ -10800,6 +10843,33 @@ mod tests {
         let serialized_without_override =
             serde_json::to_value(&without_override).expect("params should serialize");
         assert_eq!(serialized_without_override.get("serviceTier"), None);
+    }
+
+    #[test]
+    fn turn_start_params_preserve_explicit_null_reasoning_overrides() {
+        let params: TurnStartParams = serde_json::from_value(json!({
+            "threadId": "thread_123",
+            "input": [],
+            "effort": null,
+            "summary": null
+        }))
+        .expect("params should deserialize");
+
+        assert_eq!(params.effort, Some(None));
+        assert_eq!(params.summary, Some(None));
+
+        let serialized = serde_json::to_value(&params).expect("params should serialize");
+        assert_eq!(serialized.get("effort"), Some(&serde_json::Value::Null));
+        assert_eq!(serialized.get("summary"), Some(&serde_json::Value::Null));
+
+        let omitted: TurnStartParams = serde_json::from_value(json!({
+            "threadId": "thread_123",
+            "input": []
+        }))
+        .expect("params should deserialize");
+
+        assert_eq!(omitted.effort, None);
+        assert_eq!(omitted.summary, None);
     }
 
     #[test]

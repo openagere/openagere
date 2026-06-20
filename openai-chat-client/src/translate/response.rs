@@ -15,6 +15,7 @@ pub(crate) struct ChatSseState {
     pub response_id: Option<String>,
     pub server_model: Option<String>,
     pub tool_calls: HashMap<usize, ToolCallAccumulator>,
+    pub pending_completion: Option<PendingCompletion>,
     /// Tracks whether we already emitted OutputItemAdded for the current assistant message.
     /// Reset to false after each Completed event so the next turn can emit a new message.
     pub assistant_message_emitted: bool,
@@ -25,6 +26,8 @@ pub(crate) struct ChatSseState {
     pub assistant_reasoning_buffer: String,
     /// Tracks whether we already emitted OutputItemAdded for the current reasoning item.
     pub assistant_reasoning_emitted: bool,
+    /// Tracks whether a terminal completion event has already been emitted.
+    pub completed: bool,
 }
 
 #[derive(Debug)]
@@ -35,16 +38,23 @@ pub(crate) struct ToolCallAccumulator {
     pub arguments: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct PendingCompletion {
+    pub end_turn: Option<bool>,
+}
+
 impl ChatSseState {
     pub fn new() -> Self {
         Self {
             response_id: None,
             server_model: None,
             tool_calls: HashMap::new(),
+            pending_completion: None,
             assistant_message_emitted: false,
             assistant_text_buffer: String::new(),
             assistant_reasoning_buffer: String::new(),
             assistant_reasoning_emitted: false,
+            completed: false,
         }
     }
 }
@@ -65,6 +75,7 @@ pub(crate) fn handle_chat_sse_event(
     match event {
         ChatSseEvent::Done => {
             debug!("chat_sse: [DONE]");
+            emit_pending_completion(state, None, &mut results);
         }
         ChatSseEvent::Chunk {
             id,
@@ -86,6 +97,12 @@ pub(crate) fn handle_chat_sse_event(
             }
             if state.server_model.is_none() && !model.is_empty() {
                 state.server_model = Some(model.clone());
+            }
+
+            if choices.is_empty()
+                && let Some(usage) = usage.as_ref()
+            {
+                emit_pending_completion(state, Some(map_usage(usage)), &mut results);
             }
 
             for choice in choices {
@@ -200,22 +217,44 @@ pub(crate) fn handle_chat_sse_event(
                     );
                     results.push(Ok(ResponseEvent::output_item_done(done_msg)));
 
-                    let token_usage = usage.as_ref().map(map_usage);
-                    results.push(Ok(ResponseEvent::Completed {
-                        response_id: state.response_id.clone().unwrap_or_default(),
-                        token_usage,
-                        end_turn,
-                    }));
-                    // Reset for next turn
                     state.assistant_message_emitted = false;
                     state.assistant_reasoning_emitted = false;
                     state.tool_calls.clear();
+                    if let Some(usage) = usage.as_ref() {
+                        emit_completed_event(state, Some(map_usage(usage)), end_turn, &mut results);
+                    } else {
+                        state.pending_completion = Some(PendingCompletion { end_turn });
+                    }
                 }
             }
         }
     }
 
     results
+}
+
+fn emit_pending_completion(
+    state: &mut ChatSseState,
+    token_usage: Option<TokenUsage>,
+    results: &mut Vec<Result<ResponseEvent, ApiError>>,
+) {
+    if let Some(pending) = state.pending_completion.take() {
+        emit_completed_event(state, token_usage, pending.end_turn, results);
+    }
+}
+
+fn emit_completed_event(
+    state: &mut ChatSseState,
+    token_usage: Option<TokenUsage>,
+    end_turn: Option<bool>,
+    results: &mut Vec<Result<ResponseEvent, ApiError>>,
+) {
+    state.completed = true;
+    results.push(Ok(ResponseEvent::Completed {
+        response_id: state.response_id.clone().unwrap_or_default(),
+        token_usage,
+        end_turn,
+    }));
 }
 
 fn ensure_message_item(
@@ -662,6 +701,36 @@ mod tests {
     }
 
     #[test]
+    fn usage_only_chunk_after_finish_emits_completed_with_usage() {
+        let finish = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+        let usage = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#;
+
+        let mut state = ChatSseState::new();
+        let finish_events =
+            handle_chat_sse_event(&serde_json::from_str(finish).unwrap(), &mut state);
+        assert!(
+            !finish_events
+                .iter()
+                .any(|event| matches!(event, Ok(ResponseEvent::Completed { .. })))
+        );
+
+        let usage_events = handle_chat_sse_event(&serde_json::from_str(usage).unwrap(), &mut state);
+        assert!(matches!(
+            &usage_events[..],
+            [Ok(ResponseEvent::Completed {
+                end_turn: Some(true),
+                token_usage: Some(TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    total_tokens: 15,
+                    ..
+                }),
+                ..
+            })]
+        ));
+    }
+
+    #[test]
     fn finish_reason_emits_output_item_done_with_accumulated_text() {
         // Simulate a full turn: first chunk with role, text deltas, then finish_reason
         let chunk1 = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}"#;
@@ -758,7 +827,7 @@ mod tests {
 
     #[test]
     fn finish_reason_tool_calls_emits_completed_with_end_turn_false() {
-        let json = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#;
+        let json = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#;
         let mut state = ChatSseState::new();
         let events = handle_chat_sse_event(&serde_json::from_str(json).unwrap(), &mut state);
         // OutputItemDone + Completed
@@ -777,7 +846,7 @@ mod tests {
 
     #[test]
     fn finish_reason_length_emits_completed_with_end_turn_false() {
-        let json = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"#;
+        let json = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#;
         let mut state = ChatSseState::new();
         let events = handle_chat_sse_event(&serde_json::from_str(json).unwrap(), &mut state);
         assert_eq!(events.len(), 2);
@@ -795,7 +864,7 @@ mod tests {
 
     #[test]
     fn finish_reason_content_filter_emits_completed_with_end_turn_none() {
-        let json = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}"#;
+        let json = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#;
         let mut state = ChatSseState::new();
         let events = handle_chat_sse_event(&serde_json::from_str(json).unwrap(), &mut state);
         assert_eq!(events.len(), 2);

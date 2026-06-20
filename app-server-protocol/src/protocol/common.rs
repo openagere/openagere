@@ -598,6 +598,11 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::TurnInterruptResponse,
     },
+    ThreadProviderUpdate => "thread/provider/update" {
+        params: v2::ThreadProviderUpdateParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadProviderUpdateResponse,
+    },
     #[experimental("thread/realtime/start")]
     ThreadRealtimeStart => "thread/realtime/start" {
         params: v2::ThreadRealtimeStartParams,
@@ -1956,6 +1961,54 @@ mod tests {
                 "id": 1,
             }),
             serde_json::to_value(&request)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_thread_provider_update() -> Result<()> {
+        let request = ClientRequest::ThreadProviderUpdate {
+            request_id: RequestId::Integer(1),
+            params: v2::ThreadProviderUpdateParams {
+                thread_id: "thread_123".to_string(),
+                model_provider: "next-provider".to_string(),
+            },
+        };
+        assert_eq!(request.id(), &RequestId::Integer(1));
+        assert_eq!(request.method(), "thread/provider/update");
+        assert_eq!(
+            json!({
+                "method": "thread/provider/update",
+                "id": 1,
+                "params": {
+                    "threadId": "thread_123",
+                    "modelProvider": "next-provider"
+                }
+            }),
+            serde_json::to_value(&request)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_thread_provider_update_response() -> Result<()> {
+        let response = v2::ThreadProviderUpdateResponse {
+            model: "gpt-5".to_string(),
+            model_provider: "next-provider".to_string(),
+            service_tier: Some(agere_protocol::config_types::ServiceTier::Flex),
+            reasoning_effort: Some(agere_protocol::openai_models::ReasoningEffort::High),
+            reasoning_summary: Some(agere_protocol::config_types::ReasoningSummary::Detailed),
+        };
+
+        assert_eq!(
+            json!({
+                "model": "gpt-5",
+                "modelProvider": "next-provider",
+                "serviceTier": "flex",
+                "reasoningEffort": "high",
+                "reasoningSummary": "detailed"
+            }),
+            serde_json::to_value(&response)?,
         );
         Ok(())
     }

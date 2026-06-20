@@ -187,6 +187,24 @@ impl App {
         self.model_catalog = new_catalog.clone();
         self.chat_widget.set_model_catalog(new_catalog);
 
+        self.stage_provider_switch_for_displayed_thread(name.clone());
+        if app_server.provider_updates_apply_locally()
+            && let Some(thread_id) = self.current_displayed_thread_id()
+        {
+            match app_server
+                .thread_provider_update(thread_id, name.clone())
+                .await
+            {
+                Ok(_) => self.clear_pending_provider_switch_for_displayed_thread(&name),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        provider = %name,
+                        "failed to synchronize provider switch to loaded thread; next turn will carry provider override"
+                    );
+                }
+            }
+        }
         self.chat_widget
             .add_info_message(format!("Switched provider to '{name}'."), None);
     }

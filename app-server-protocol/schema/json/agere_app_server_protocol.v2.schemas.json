@@ -2271,6 +2271,30 @@
             },
             "method": {
               "enum": [
+                "thread/provider/update"
+              ],
+              "title": "Thread/provider/updateRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadProviderUpdateParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/provider/updateRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "review/start"
               ],
               "title": "Review/startRequestMethod",
@@ -13854,6 +13878,70 @@
       "title": "ThreadNameUpdatedNotification",
       "type": "object"
     },
+    "ThreadProviderUpdateParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "modelProvider": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "modelProvider",
+        "threadId"
+      ],
+      "title": "ThreadProviderUpdateParams",
+      "type": "object"
+    },
+    "ThreadProviderUpdateResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "modelProvider": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoningSummary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serviceTier": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "modelProvider"
+      ],
+      "title": "ThreadProviderUpdateResponse",
+      "type": "object"
+    },
     "ThreadRateLimitWaitingNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -15310,7 +15398,14 @@
         "effort": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ReasoningEffort"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReasoningEffort"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             {
               "type": "null"
@@ -15373,7 +15468,14 @@
         "summary": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ReasoningSummary"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReasoningSummary"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             {
               "type": "null"

@@ -1,6 +1,8 @@
 use super::*;
 use agere_model_provider_info::WireApi;
 use pretty_assertions::assert_eq;
+use std::time::Duration;
+use tokio::sync::broadcast;
 
 fn use_non_openai_provider(chat: &mut ChatWidget) {
     chat.config.model_provider_id = "anthropic".to_string();
@@ -760,6 +762,57 @@ async fn live_app_server_rate_limit_countdown_expiry_restores_status() {
     assert_eq!(status.details(), None);
     assert!(chat.retry_status_header.is_none());
     assert!(chat.rate_limit_wait.is_none());
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn live_app_server_rate_limit_waiting_schedules_countdown_frames() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let (draw_tx, mut draw_rx) = broadcast::channel(16);
+    chat.frame_requester = FrameRequester::new(draw_tx);
+
+    chat.handle_server_notification(
+        ServerNotification::TurnStarted(TurnStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn: AppServerTurn {
+                id: "turn-1".to_string(),
+                items: Vec::new(),
+                status: AppServerTurnStatus::InProgress,
+                error: None,
+                started_at: Some(0),
+                completed_at: None,
+                duration_ms: None,
+            },
+            model_context_window: None,
+        }),
+        /*replay_kind*/ None,
+    );
+    drain_insert_history(&mut rx);
+
+    chat.handle_server_notification(
+        ServerNotification::ThreadRateLimitWaiting(
+            agere_app_server_protocol::ThreadRateLimitWaitingNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                attempt: 2,
+                max_attempts: 5,
+                resume_at: chrono::Utc::now().timestamp() + 60,
+                wait_seconds: 60,
+                reason: "rate limited".to_string(),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+    tokio::time::advance(Duration::from_millis(1)).await;
+    while draw_rx.try_recv().is_ok() {}
+
+    chat.pre_draw_tick();
+    tokio::time::advance(Duration::from_millis(999)).await;
+    assert!(draw_rx.try_recv().is_err());
+    tokio::time::advance(Duration::from_millis(1)).await;
+    draw_rx
+        .recv()
+        .await
+        .expect("countdown should schedule the next frame");
 }
 
 #[tokio::test]

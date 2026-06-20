@@ -14,6 +14,9 @@ use agere_protocol::protocol::GuardianCommandSource;
 use agere_protocol::protocol::McpInvocation;
 use agere_protocol::protocol::RawResponseItemEvent;
 use agere_protocol::protocol::ReviewDecision;
+use agere_protocol::protocol::TokenCountEvent;
+use agere_protocol::protocol::TokenUsage;
+use agere_protocol::protocol::TokenUsageInfo;
 use agere_protocol::protocol::TurnAbortReason;
 use agere_protocol::protocol::TurnAbortedEvent;
 use agere_protocol::request_permissions::RequestPermissionProfile;
@@ -107,6 +110,72 @@ async fn forward_events_cancelled_while_send_blocked_shuts_down_delegate() {
         ops.iter().any(|op| matches!(op, Op::Shutdown)),
         "expected Shutdown op after cancellation"
     );
+}
+
+#[tokio::test]
+async fn forward_events_forwards_token_count_updates() {
+    let (tx_events, rx_events) = bounded(SUBMISSION_CHANNEL_CAPACITY);
+    let (tx_sub, _rx_sub) = bounded(SUBMISSION_CHANNEL_CAPACITY);
+    let (_agent_status_tx, agent_status) = watch::channel(AgentStatus::PendingInit);
+    let (session, ctx, _rx_evt) = crate::session::tests::make_session_and_context_with_rx().await;
+    let agere = Arc::new(Agere {
+        tx_sub,
+        rx_event: rx_events,
+        agent_status,
+        session: Arc::clone(&session),
+        session_loop_termination: completed_session_loop_termination(),
+    });
+
+    let (tx_out, rx_out) = bounded(SUBMISSION_CHANNEL_CAPACITY);
+    let cancel = CancellationToken::new();
+    let forward = tokio::spawn(forward_events(
+        Arc::clone(&agere),
+        tx_out,
+        session,
+        ctx,
+        Arc::new(Mutex::new(HashMap::new())),
+        cancel,
+    ));
+
+    let token_info = TokenUsageInfo {
+        total_token_usage: TokenUsage {
+            input_tokens: 20,
+            output_tokens: 5,
+            total_tokens: 25,
+            ..TokenUsage::default()
+        },
+        last_token_usage: TokenUsage {
+            input_tokens: 20,
+            output_tokens: 5,
+            total_tokens: 25,
+            ..TokenUsage::default()
+        },
+        model_context_window: Some(200_000),
+    };
+    let token_event = Event {
+        id: "token-count".to_string(),
+        msg: EventMsg::TokenCount(TokenCountEvent {
+            info: Some(token_info.clone()),
+            rate_limits: None,
+        }),
+    };
+    tx_events.send(token_event).await.unwrap();
+
+    let received = timeout(Duration::from_secs(1), rx_out.recv())
+        .await
+        .expect("forwarded token count timed out")
+        .expect("forwarded token count missing");
+    let EventMsg::TokenCount(received_event) = received.msg else {
+        panic!("expected TokenCount event, got {:?}", received.msg);
+    };
+    assert_eq!(received_event.info, Some(token_info));
+    assert!(received_event.rate_limits.is_none());
+
+    drop(tx_events);
+    timeout(Duration::from_secs(1), forward)
+        .await
+        .expect("forward_events did not exit")
+        .expect("forward_events join error");
 }
 
 #[tokio::test]

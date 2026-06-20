@@ -153,8 +153,8 @@ pub struct ConversationStartParams {
     pub output_modality: RealtimeOutputModality,
     #[serde(
         default,
-        deserialize_with = "conversation_start_prompt_serde::deserialize",
-        serialize_with = "conversation_start_prompt_serde::serialize",
+        deserialize_with = "double_option_serde::deserialize",
+        serialize_with = "double_option_serde::serialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub prompt: Option<Option<String>>,
@@ -181,22 +181,24 @@ pub enum RealtimeOutputModality {
     Audio,
 }
 
-mod conversation_start_prompt_serde {
+mod double_option_serde {
     use serde::Deserializer;
     use serde::Serializer;
 
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+    pub(crate) fn deserialize<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
     where
+        T: serde::Deserialize<'de>,
         D: Deserializer<'de>,
     {
         serde_with::rust::double_option::deserialize(deserializer)
     }
 
-    pub(crate) fn serialize<S>(
-        value: &Option<Option<String>>,
+    pub(crate) fn serialize<T, S>(
+        value: &Option<Option<T>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
+        T: serde::Serialize,
         S: Serializer,
     {
         serde_with::rust::double_option::serialize(value, serializer)
@@ -490,18 +492,36 @@ pub enum Op {
         ///
         /// Use `Some(Some(_))` to set a specific effort, `Some(None)` to clear
         /// the effort, or `None` to leave the existing value unchanged.
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
         effort: Option<Option<ReasoningEffortConfig>>,
 
         /// Updated reasoning summary preference (honored only for reasoning-capable models).
-        #[serde(skip_serializing_if = "Option::is_none")]
-        summary: Option<ReasoningSummaryConfig>,
+        ///
+        /// Use `Some(Some(_))` to set a specific summary, `Some(None)` to clear
+        /// the summary, or `None` to leave the existing value unchanged.
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
+        summary: Option<Option<ReasoningSummaryConfig>>,
 
         /// Updated service tier preference for future turns.
         ///
         /// Use `Some(Some(_))` to set a specific tier, `Some(None)` to clear the
         /// preference, or `None` to leave the existing value unchanged.
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
         service_tier: Option<Option<ServiceTier>>,
 
         /// EXPERIMENTAL - set a pre-set collaboration mode.
@@ -540,22 +560,41 @@ pub enum Op {
         model: String,
 
         /// Will only be honored if the model is configured to use reasoning.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        effort: Option<ReasoningEffortConfig>,
+        ///
+        /// Use `Some(Some(_))` to set a specific effort, `Some(None)` to clear
+        /// the effort, or `None` to keep the current setting.
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
+        effort: Option<Option<ReasoningEffortConfig>>,
 
         /// Will only be honored if the model is configured to use reasoning.
         ///
-        /// When omitted, the session keeps the current setting (which allows core to
-        /// fall back to the selected model's default on new sessions).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        summary: Option<ReasoningSummaryConfig>,
+        /// Use `Some(Some(_))` to set a specific summary, `Some(None)` to clear
+        /// the summary, or `None` to keep the current setting (which allows core
+        /// to fall back to the selected model's default on new sessions).
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
+        summary: Option<Option<ReasoningSummaryConfig>>,
 
         /// Optional service tier override for this turn.
         ///
         /// Use `Some(Some(_))` to set a specific tier for this turn, `Some(None)` to
         /// explicitly clear the tier for this turn, or `None` to keep the existing
         /// session preference.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
         service_tier: Option<Option<ServiceTier>>,
 
         // The JSON schema to use for the final assistant message
@@ -617,18 +656,36 @@ pub enum Op {
         ///
         /// Use `Some(Some(_))` to set a specific effort, `Some(None)` to clear
         /// the effort, or `None` to leave the existing value unchanged.
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
         effort: Option<Option<ReasoningEffortConfig>>,
 
         /// Updated reasoning summary preference (honored only for reasoning-capable models).
-        #[serde(skip_serializing_if = "Option::is_none")]
-        summary: Option<ReasoningSummaryConfig>,
+        ///
+        /// Use `Some(Some(_))` to set a specific summary, `Some(None)` to clear
+        /// the summary, or `None` to leave the existing value unchanged.
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
+        summary: Option<Option<ReasoningSummaryConfig>>,
 
         /// Updated service tier preference for future turns.
         ///
         /// Use `Some(Some(_))` to set a specific tier, `Some(None)` to clear the
         /// preference, or `None` to leave the existing value unchanged.
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "double_option_serde::deserialize",
+            serialize_with = "double_option_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
         service_tier: Option<Option<ServiceTier>>,
 
         /// EXPERIMENTAL - set a pre-set collaboration mode.
@@ -4923,6 +4980,59 @@ mod tests {
         match without_field {
             Op::UserInputWithTurnContext { model_provider, .. } => {
                 assert_eq!(model_provider, None);
+            }
+            other => panic!("unexpected op variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn user_turn_preserves_explicit_null_reasoning_overrides() {
+        let value = json!({
+            "type": "user_turn",
+            "items": [],
+            "cwd": ".",
+            "approval_policy": "never",
+            "model": "gpt-5",
+            "effort": null,
+            "summary": null,
+            "service_tier": null,
+            "final_output_json_schema": null,
+        });
+
+        let parsed: Op = serde_json::from_value(value).expect("deserialize user turn");
+        match parsed {
+            Op::UserTurn {
+                effort,
+                summary,
+                service_tier,
+                ..
+            } => {
+                assert_eq!(effort, Some(None));
+                assert_eq!(summary, Some(None));
+                assert_eq!(service_tier, Some(None));
+            }
+            other => panic!("unexpected op variant: {other:?}"),
+        }
+
+        let omitted: Op = serde_json::from_value(json!({
+            "type": "user_turn",
+            "items": [],
+            "cwd": ".",
+            "approval_policy": "never",
+            "model": "gpt-5",
+            "final_output_json_schema": null,
+        }))
+        .expect("deserialize user turn");
+        match omitted {
+            Op::UserTurn {
+                effort,
+                summary,
+                service_tier,
+                ..
+            } => {
+                assert_eq!(effort, None);
+                assert_eq!(summary, None);
+                assert_eq!(service_tier, None);
             }
             other => panic!("unexpected op variant: {other:?}"),
         }

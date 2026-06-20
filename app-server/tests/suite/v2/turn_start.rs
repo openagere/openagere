@@ -31,6 +31,7 @@ use agere_app_server_protocol::ServerRequest;
 use agere_app_server_protocol::ServerRequestResolvedNotification;
 use agere_app_server_protocol::TextElement;
 use agere_app_server_protocol::ThreadItem;
+use agere_app_server_protocol::ThreadProviderUpdateResponse;
 use agere_app_server_protocol::ThreadStartParams;
 use agere_app_server_protocol::ThreadStartResponse;
 use agere_app_server_protocol::TurnCompletedNotification;
@@ -1022,8 +1023,8 @@ async fn turn_start_accepts_collaboration_mode_override_v2() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             model: Some("mock-model-override".to_string()),
-            effort: Some(ReasoningEffort::Low),
-            summary: Some(ReasoningSummary::Auto),
+            effort: Some(Some(ReasoningEffort::Low)),
+            summary: Some(Some(ReasoningSummary::Auto)),
             output_schema: None,
             collaboration_mode: Some(collaboration_mode),
             ..Default::default()
@@ -1110,8 +1111,8 @@ async fn turn_start_uses_thread_feature_overrides_for_collaboration_mode_instruc
                 text_elements: Vec::new(),
             }],
             model: Some("mock-model-override".to_string()),
-            effort: Some(ReasoningEffort::Low),
-            summary: Some(ReasoningSummary::Auto),
+            effort: Some(Some(ReasoningEffort::Low)),
+            summary: Some(Some(ReasoningSummary::Auto)),
             output_schema: None,
             collaboration_mode: Some(collaboration_mode),
             ..Default::default()
@@ -1133,6 +1134,86 @@ async fn turn_start_uses_thread_feature_overrides_for_collaboration_mode_instruc
     let request = response_mock.single_request();
     let payload_text = request.body_json().to_string();
     assert!(payload_text.contains("The `request_user_input` tool is available in Default mode."));
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn turn_start_null_summary_clears_reasoning_summary_override() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Done"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let response_mock = responses::mount_sse_once(&server, body).await;
+
+    let agere_home = TempDir::new()?;
+    create_config_toml(
+        agere_home.path(),
+        &server.uri(),
+        "never",
+        &BTreeMap::default(),
+    )?;
+    std::fs::write(
+        agere_home.path().join("config.toml"),
+        std::fs::read_to_string(agere_home.path().join("config.toml"))?
+            + "\nmodel_reasoning_effort = \"medium\"\nmodel_reasoning_summary = \"auto\"\n",
+    )?;
+    let mut model = test_model_info("mock-model");
+    model.supports_reasoning_summaries = true;
+    write_models_cache_with_models(agere_home.path(), vec![model])?;
+
+    let mut mcp = McpProcess::new(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_req = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id,
+            input: vec![V2UserInput::Text {
+                text: "Hello".to_string(),
+                text_elements: Vec::new(),
+            }],
+            summary: Some(None),
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let request = response_mock.single_request();
+    let payload = request.body_json();
+    assert_eq!(
+        payload["reasoning"]
+            .get("effort")
+            .and_then(serde_json::Value::as_str),
+        Some("medium")
+    );
+    assert_eq!(payload["reasoning"].get("summary"), None);
 
     Ok(())
 }
@@ -1616,8 +1697,8 @@ async fn turn_start_exec_approval_toggle_v2() -> Result<()> {
             access_policy: Some(agere_app_server_protocol::AccessPolicy::DangerFullAccess),
             model: Some("mock-model".to_string()),
             model_provider: None,
-            effort: Some(ReasoningEffort::Medium),
-            summary: Some(ReasoningSummary::Auto),
+            effort: Some(Some(ReasoningEffort::Medium)),
+            summary: Some(Some(ReasoningSummary::Auto)),
             ..Default::default()
         })
         .await?;
@@ -1860,8 +1941,8 @@ async fn turn_start_updates_filesystem_access_envelope_and_cwd_between_turns_v2(
             permission_profile: None,
             model: Some("mock-model".to_string()),
             model_provider: None,
-            effort: Some(ReasoningEffort::Medium),
-            summary: Some(ReasoningSummary::Auto),
+            effort: Some(Some(ReasoningEffort::Medium)),
+            summary: Some(Some(ReasoningSummary::Auto)),
             service_tier: None,
             personality: None,
             output_schema: None,
@@ -1897,8 +1978,8 @@ async fn turn_start_updates_filesystem_access_envelope_and_cwd_between_turns_v2(
             permission_profile: None,
             model: Some("mock-model".to_string()),
             model_provider: None,
-            effort: Some(ReasoningEffort::Medium),
-            summary: Some(ReasoningSummary::Auto),
+            effort: Some(Some(ReasoningEffort::Medium)),
+            summary: Some(Some(ReasoningSummary::Auto)),
             service_tier: None,
             personality: None,
             output_schema: None,
@@ -3514,6 +3595,570 @@ stream_max_retries = 0
         mcp.read_stream_until_notification_message("turn/completed"),
     )
     .await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn provider_update_changes_runtime_for_turns_without_turn_start_provider_override()
+-> Result<()> {
+    let old_provider = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let new_provider =
+        create_mock_responses_server_sequence(vec![create_final_assistant_message_sse_response(
+            "Done",
+        )?])
+        .await;
+
+    let agere_home = TempDir::new()?;
+    std::fs::write(
+        agere_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "old-provider-model"
+approval_policy = "never"
+access_mode = "read-only"
+
+model_provider = "mock_provider"
+
+[[models]]
+name = "old-provider-model"
+context_window = 200000
+
+[[models]]
+name = "new-provider-model"
+context_window = 1000000
+
+[model_providers.mock_provider]
+name = "Old provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.new_provider]
+name = "New provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            old_provider.uri(),
+            new_provider.uri()
+        ),
+    )?;
+    write_models_cache_with_models(
+        agere_home.path(),
+        vec![
+            test_model_info("old-provider-model"),
+            test_model_info("new-provider-model"),
+        ],
+    )?;
+
+    let mut mcp = McpProcess::new(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_request = mcp
+        .send_thread_start_request(ThreadStartParams::default())
+        .await?;
+    let thread_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_request)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_response)?;
+
+    std::fs::write(
+        agere_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "new-provider-model"
+approval_policy = "never"
+access_mode = "read-only"
+model_reasoning_effort = "high"
+model_reasoning_summary = "detailed"
+model_supports_reasoning_summaries = true
+service_tier = "flex"
+
+model_provider = "new_provider"
+
+[[models]]
+name = "old-provider-model"
+context_window = 200000
+
+[[models]]
+name = "new-provider-model"
+context_window = 1000000
+
+[model_providers.mock_provider]
+name = "Old provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.new_provider]
+name = "New provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            old_provider.uri(),
+            new_provider.uri()
+        ),
+    )?;
+
+    let update_request = mcp
+        .send_raw_request(
+            "thread/provider/update",
+            Some(json!({
+                "threadId": thread.id,
+                "modelProvider": "new_provider"
+            })),
+        )
+        .await?;
+    let update_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(update_request)),
+    )
+    .await??;
+    let update: ThreadProviderUpdateResponse =
+        to_response::<ThreadProviderUpdateResponse>(update_response)?;
+    assert_eq!(
+        update,
+        ThreadProviderUpdateResponse {
+            model: "new-provider-model".to_string(),
+            model_provider: "new_provider".to_string(),
+            service_tier: Some(agere_protocol::config_types::ServiceTier::Flex),
+            reasoning_effort: Some(ReasoningEffort::High),
+            reasoning_summary: Some(ReasoningSummary::Detailed),
+        }
+    );
+
+    let turn_request = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "Hello".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_request)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_response)?;
+    assert_eq!(turn.status, TurnStatus::InProgress);
+
+    let started_notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/started"),
+    )
+    .await??;
+    let started: TurnStartedNotification = serde_json::from_value(
+        started_notification
+            .params
+            .ok_or_else(|| anyhow::anyhow!("turn/started notification should include params"))?,
+    )?;
+    assert_eq!(started.model_context_window, Some(950_000));
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let old_provider_requests = old_provider
+        .received_requests()
+        .await
+        .expect("old provider requests should be readable");
+    let new_provider_requests = new_provider
+        .received_requests()
+        .await
+        .expect("new provider requests should be readable");
+    assert_eq!(old_provider_requests.len(), 0);
+    assert_eq!(new_provider_requests.len(), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn turn_start_provider_override_applies_latest_config_model_scalars_when_omitted()
+-> Result<()> {
+    let old_provider = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let new_provider =
+        create_mock_responses_server_sequence(vec![create_final_assistant_message_sse_response(
+            "Done",
+        )?])
+        .await;
+
+    let agere_home = TempDir::new()?;
+    std::fs::write(
+        agere_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "old-provider-model"
+approval_policy = "never"
+access_mode = "read-only"
+model_reasoning_effort = "low"
+model_reasoning_summary = "concise"
+model_supports_reasoning_summaries = true
+
+model_provider = "mock_provider"
+
+[[models]]
+name = "old-provider-model"
+context_window = 200000
+
+[[models]]
+name = "new-provider-model"
+context_window = 1000000
+
+[model_providers.mock_provider]
+name = "Old provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.new_provider]
+name = "New provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            old_provider.uri(),
+            new_provider.uri()
+        ),
+    )?;
+    let mut old_model = test_model_info("old-provider-model");
+    old_model.supports_reasoning_summaries = true;
+    let mut new_model = test_model_info("new-provider-model");
+    new_model.supports_reasoning_summaries = true;
+    write_models_cache_with_models(agere_home.path(), vec![old_model, new_model])?;
+
+    let mut mcp = McpProcess::new(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_request = mcp
+        .send_thread_start_request(ThreadStartParams::default())
+        .await?;
+    let thread_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_request)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_response)?;
+
+    std::fs::write(
+        agere_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "new-provider-model"
+approval_policy = "never"
+access_mode = "read-only"
+model_reasoning_effort = "high"
+model_reasoning_summary = "detailed"
+model_supports_reasoning_summaries = true
+service_tier = "flex"
+
+model_provider = "new_provider"
+
+[[models]]
+name = "old-provider-model"
+context_window = 200000
+
+[[models]]
+name = "new-provider-model"
+context_window = 1000000
+
+[model_providers.mock_provider]
+name = "Old provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.new_provider]
+name = "New provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            old_provider.uri(),
+            new_provider.uri()
+        ),
+    )?;
+
+    let turn_request = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id,
+            model_provider: Some("new_provider".to_string()),
+            input: vec![V2UserInput::Text {
+                text: "Hello".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_request)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_response)?;
+    assert_eq!(turn.status, TurnStatus::InProgress);
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let old_provider_requests = old_provider
+        .received_requests()
+        .await
+        .expect("old provider requests should be readable");
+    let new_provider_requests = new_provider
+        .received_requests()
+        .await
+        .expect("new provider requests should be readable");
+    assert_eq!(old_provider_requests.len(), 0);
+    assert_eq!(new_provider_requests.len(), 1);
+
+    let body: serde_json::Value = serde_json::from_slice(&new_provider_requests[0].body)?;
+    assert_eq!(
+        body.get("model").and_then(serde_json::Value::as_str),
+        Some("new-provider-model")
+    );
+    assert_eq!(
+        body.get("service_tier").and_then(serde_json::Value::as_str),
+        Some("flex")
+    );
+    assert_eq!(
+        body.pointer("/reasoning/effort")
+            .and_then(serde_json::Value::as_str),
+        Some("high")
+    );
+    assert_eq!(
+        body.pointer("/reasoning/summary")
+            .and_then(serde_json::Value::as_str),
+        Some("detailed")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn provider_update_preserves_current_collaboration_mode() -> Result<()> {
+    let old_provider =
+        create_mock_responses_server_sequence(vec![create_final_assistant_message_sse_response(
+            "Mode set",
+        )?])
+        .await;
+    let new_provider =
+        create_mock_responses_server_sequence(vec![create_final_assistant_message_sse_response(
+            "Done",
+        )?])
+        .await;
+
+    let agere_home = TempDir::new()?;
+    std::fs::write(
+        agere_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "old-provider-model"
+approval_policy = "never"
+access_mode = "read-only"
+
+model_provider = "mock_provider"
+
+[[models]]
+name = "old-provider-model"
+context_window = 200000
+
+[[models]]
+name = "new-provider-model"
+context_window = 200000
+
+[model_providers.mock_provider]
+name = "Old provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.new_provider]
+name = "New provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            old_provider.uri(),
+            new_provider.uri()
+        ),
+    )?;
+    write_models_cache_with_models(
+        agere_home.path(),
+        vec![
+            test_model_info("old-provider-model"),
+            test_model_info("new-provider-model"),
+        ],
+    )?;
+
+    let mut mcp = McpProcess::new(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_request = mcp
+        .send_thread_start_request(ThreadStartParams::default())
+        .await?;
+    let thread_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_request)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_response)?;
+
+    std::fs::write(
+        agere_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "new-provider-model"
+approval_policy = "never"
+access_mode = "read-only"
+
+model_provider = "new_provider"
+
+[[models]]
+name = "old-provider-model"
+context_window = 200000
+
+[[models]]
+name = "new-provider-model"
+context_window = 200000
+
+[model_providers.mock_provider]
+name = "Old provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.new_provider]
+name = "New provider"
+base_url = "{}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            old_provider.uri(),
+            new_provider.uri()
+        ),
+    )?;
+
+    let plan_mode = CollaborationMode {
+        mode: ModeKind::Plan,
+        settings: Settings {
+            model: "old-provider-model".to_string(),
+            reasoning_effort: Some(ReasoningEffort::High),
+            developer_instructions: None,
+        },
+    };
+    let mode_request = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "Set plan mode".to_string(),
+                text_elements: Vec::new(),
+            }],
+            collaboration_mode: Some(plan_mode),
+            ..Default::default()
+        })
+        .await?;
+    let mode_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(mode_request)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(mode_response)?;
+    assert_eq!(turn.status, TurnStatus::InProgress);
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let update_request = mcp
+        .send_raw_request(
+            "thread/provider/update",
+            Some(json!({
+                "threadId": thread.id,
+                "modelProvider": "new_provider"
+            })),
+        )
+        .await?;
+    let update_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(update_request)),
+    )
+    .await??;
+    let update: ThreadProviderUpdateResponse =
+        to_response::<ThreadProviderUpdateResponse>(update_response)?;
+    assert_eq!(
+        update,
+        ThreadProviderUpdateResponse {
+            model: "new-provider-model".to_string(),
+            model_provider: "new_provider".to_string(),
+            service_tier: None,
+            reasoning_effort: Some(ReasoningEffort::High),
+            reasoning_summary: None,
+        }
+    );
+
+    let turn_request = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "Hello".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_request)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_response)?;
+    assert_eq!(turn.status, TurnStatus::InProgress);
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let new_provider_requests = new_provider
+        .received_requests()
+        .await
+        .expect("new provider requests should be readable");
+    assert_eq!(new_provider_requests.len(), 1);
+    let request_body: serde_json::Value = new_provider_requests[0].body_json()?;
+    let request_text = request_body.to_string();
+    assert!(
+        request_text.contains("This tool is only available in Plan mode."),
+        "expected provider update to preserve Plan mode instructions, got {request_text}"
+    );
 
     Ok(())
 }
