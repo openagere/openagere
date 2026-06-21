@@ -44,6 +44,7 @@ pub enum SlashCommand {
     Diff,
     Mention,
     Status,
+    Usage,
     DebugConfig,
     Title,
     Statusline,
@@ -93,6 +94,7 @@ impl SlashCommand {
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Agere performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
+            SlashCommand::Usage => "view token usage statistics by provider",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
             SlashCommand::Title => "configure which items appear in the terminal title",
             SlashCommand::Statusline => "configure which items appear in the status line",
@@ -153,6 +155,7 @@ impl SlashCommand {
                 | SlashCommand::Resume
                 | SlashCommand::AddReadDir
                 | SlashCommand::Provider
+                | SlashCommand::Usage
         )
     }
 
@@ -160,7 +163,11 @@ impl SlashCommand {
     pub fn available_in_side_conversation(self) -> bool {
         matches!(
             self,
-            SlashCommand::Copy | SlashCommand::Diff | SlashCommand::Mention | SlashCommand::Status
+            SlashCommand::Copy
+                | SlashCommand::Diff
+                | SlashCommand::Mention
+                | SlashCommand::Status
+                | SlashCommand::Usage
         )
     }
 
@@ -209,7 +216,8 @@ impl SlashCommand {
             | SlashCommand::Feedback
             | SlashCommand::Quit
             | SlashCommand::Exit
-            | SlashCommand::Side => true,
+            | SlashCommand::Side
+            | SlashCommand::Usage => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,

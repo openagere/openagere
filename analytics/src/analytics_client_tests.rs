@@ -278,6 +278,7 @@ fn sample_turn_token_usage_fact(thread_id: &str, turn_id: &str) -> TurnTokenUsag
             output_tokens: 140,
             reasoning_output_tokens: 13,
         },
+        provider_id: "openai".to_string(),
     }
 }
 

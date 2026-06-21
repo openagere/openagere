@@ -186,25 +186,7 @@ impl App {
                 self.begin_initial_history_replay_buffer();
             }
             AppEvent::InsertHistoryCell(cell) => {
-                let cell: Arc<dyn HistoryCell> = cell.into();
-                if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                    t.insert_cell(cell.clone());
-                    tui.frame_requester().schedule_frame();
-                }
-                self.transcript_cells.push(cell.clone());
-                if self.initial_history_replay_buffer.as_ref().is_some() {
-                    self.insert_history_cell_lines_with_initial_replay_buffer(
-                        tui,
-                        cell.as_ref(),
-                        tui.terminal.last_known_screen_size.width,
-                    );
-                } else {
-                    self.insert_history_cell_lines(
-                        tui,
-                        cell.as_ref(),
-                        tui.terminal.last_known_screen_size.width,
-                    );
-                }
+                self.insert_history_cell(tui, cell);
             }
             AppEvent::EndInitialHistoryReplayBuffer => {
                 self.finish_initial_history_replay_buffer(tui);
@@ -212,63 +194,68 @@ impl App {
             AppEvent::ConsolidateAgentMessage { source, cwd } => {
                 if !self.terminal_resize_reflow_enabled() {
                     self.transcript_reflow.clear();
-                    return Ok(AppRunControl::Continue);
-                }
-                let end = self.transcript_cells.len();
-                let start =
-                    trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
-                if start < end {
-                    let consolidated: Arc<dyn HistoryCell> =
-                        Arc::new(history_cell::AgentMarkdownCell::new(source, &cwd));
-                    self.transcript_cells
-                        .splice(start..end, std::iter::once(consolidated.clone()));
-
-                    if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                        t.consolidate_cells(start..end, consolidated.clone());
-                        tui.frame_requester().schedule_frame();
-                    }
-
-                    self.maybe_finish_stream_reflow(tui)?;
                 } else {
-                    self.maybe_finish_stream_reflow(tui)?;
+                    let end = self.transcript_cells.len();
+                    let start = trailing_run_start::<history_cell::AgentMessageCell>(
+                        &self.transcript_cells,
+                    );
+                    if start < end {
+                        let consolidated: Arc<dyn HistoryCell> =
+                            Arc::new(history_cell::AgentMarkdownCell::new(source, &cwd));
+                        self.transcript_cells
+                            .splice(start..end, std::iter::once(consolidated.clone()));
+
+                        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+                            t.consolidate_cells(start..end, consolidated.clone());
+                            tui.frame_requester().schedule_frame();
+                        }
+
+                        self.maybe_finish_stream_reflow(tui)?;
+                    } else {
+                        self.maybe_finish_stream_reflow(tui)?;
+                    }
                 }
+                self.chat_widget.note_stream_consolidation_completed();
+                self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::ConsolidateProposedPlan(source) => {
                 if !self.terminal_resize_reflow_enabled() {
                     self.transcript_reflow.clear();
-                    return Ok(AppRunControl::Continue);
-                }
-                let end = self.transcript_cells.len();
-                let start = trailing_run_start::<history_cell::ProposedPlanStreamCell>(
-                    &self.transcript_cells,
-                );
-                let consolidated: Arc<dyn HistoryCell> =
-                    Arc::new(history_cell::new_proposed_plan(source, &self.config.cwd));
-
-                if start < end {
-                    self.transcript_cells
-                        .splice(start..end, std::iter::once(consolidated.clone()));
-
-                    if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                        t.consolidate_cells(start..end, consolidated.clone());
-                        tui.frame_requester().schedule_frame();
-                    }
-
-                    self.finish_required_stream_reflow(tui)?;
                 } else {
-                    self.transcript_cells.push(consolidated.clone());
-                    if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                        t.insert_cell(consolidated.clone());
-                        tui.frame_requester().schedule_frame();
-                    }
-                    self.insert_history_cell_lines(
-                        tui,
-                        consolidated.as_ref(),
-                        tui.terminal.last_known_screen_size.width,
+                    let end = self.transcript_cells.len();
+                    let start = trailing_run_start::<history_cell::ProposedPlanStreamCell>(
+                        &self.transcript_cells,
                     );
+                    let consolidated: Arc<dyn HistoryCell> =
+                        Arc::new(history_cell::new_proposed_plan(source, &self.config.cwd));
 
-                    self.maybe_finish_stream_reflow(tui)?;
+                    if start < end {
+                        self.transcript_cells
+                            .splice(start..end, std::iter::once(consolidated.clone()));
+
+                        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+                            t.consolidate_cells(start..end, consolidated.clone());
+                            tui.frame_requester().schedule_frame();
+                        }
+
+                        self.finish_required_stream_reflow(tui)?;
+                    } else {
+                        self.transcript_cells.push(consolidated.clone());
+                        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+                            t.insert_cell(consolidated.clone());
+                            tui.frame_requester().schedule_frame();
+                        }
+                        self.insert_history_cell_lines(
+                            tui,
+                            consolidated.as_ref(),
+                            tui.terminal.last_known_screen_size.width,
+                        );
+
+                        self.maybe_finish_stream_reflow(tui)?;
+                    }
                 }
+                self.chat_widget.note_stream_consolidation_completed();
+                self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::ApplyThreadRollback { num_turns } => {
                 if self.apply_non_pending_thread_rollback(num_turns) {
@@ -636,6 +623,27 @@ impl App {
             },
             AppEvent::ConnectorsLoaded { result, is_final } => {
                 self.chat_widget.on_connectors_loaded(result, is_final);
+            }
+            AppEvent::RefreshTokenActivity { request_id } => {
+                self.refresh_token_activity(app_server, request_id);
+            }
+            AppEvent::OpenTokenActivity => {
+                self.chat_widget
+                    .add_token_activity_output(crate::chatwidget::tokens::TokenActivityView::Daily);
+            }
+            AppEvent::TokenActivityLoaded { request_id, result } => {
+                if let Err(err) = &result {
+                    tracing::warn!("usage/read failed during TUI refresh: {err}");
+                }
+                self.chat_widget
+                    .finish_token_activity_refresh(request_id, result);
+                self.insert_pending_usage_output_if_ready(tui);
+            }
+            AppEvent::CommitPendingUsageOutput => {
+                self.insert_pending_usage_output_if_ready(tui);
+            }
+            AppEvent::CommitPendingUsageOutputAfterStreamShutdown => {
+                self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort);

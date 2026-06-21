@@ -5,7 +5,7 @@ expression: sanitized
 /status
 
 ╭─────────────────────────────────────────────────────────────────────────────╮
-│  Open Agere (v0.3.17)                                                       │
+│  Open Agere (v0.3.18)                                                       │
 │                                                                             │
 │  Model:            gpt-5.4 (reasoning medium, summaries auto)               │
 │  Directory: [[workspace]]                                                   │

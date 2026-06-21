@@ -216,6 +216,33 @@ impl dyn HistoryCell {
     }
 }
 
+/// Newtype wrapper that adapts a `&dyn HistoryCell` reference to the [`Renderable`] trait.
+///
+/// This exists because trait-object references cannot be directly coerced between
+/// unrelated trait objects even when a blanket impl connects them.
+pub(crate) struct HistoryCellRenderable<'a>(pub(crate) &'a dyn HistoryCell);
+
+impl Renderable for HistoryCellRenderable<'_> {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let content_width = area.width.max(1);
+        let lines = self.0.display_lines(content_width);
+        let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        let y = if area.height == 0 {
+            0
+        } else {
+            let overflow = paragraph
+                .line_count(content_width)
+                .saturating_sub(usize::from(area.height));
+            u16::try_from(overflow).unwrap_or(u16::MAX)
+        };
+        Clear.render(area, buf);
+        paragraph.scroll((y, 0)).render(area, buf);
+    }
+    fn desired_height(&self, width: u16) -> u16 {
+        self.0.desired_height(width)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct UserHistoryCell {
     pub message: String,

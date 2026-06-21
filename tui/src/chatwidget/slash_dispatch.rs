@@ -375,6 +375,9 @@ impl ChatWidget {
                     );
                 }
             }
+            SlashCommand::Usage => {
+                self.add_token_activity_output(crate::chatwidget::tokens::TokenActivityView::Daily);
+            }
             SlashCommand::DebugConfig => {
                 self.add_debug_config_output();
             }
@@ -799,6 +802,13 @@ impl ChatWidget {
             SlashCommand::Provider if !trimmed.is_empty() => {
                 self.dispatch_provider_inline_arg(trimmed);
             }
+            SlashCommand::Usage => {
+                match crate::chatwidget::tokens::TokenActivityView::parse(trimmed) {
+                    Some(view) => self.add_token_activity_output(view),
+                    None => self
+                        .add_error_message("Usage: /usage [daily|weekly|cumulative]".to_string()),
+                }
+            }
             _ => self.dispatch_command(cmd),
         }
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
@@ -975,7 +985,8 @@ impl ChatWidget {
             | SlashCommand::Copy
             | SlashCommand::Diff
             | SlashCommand::Rename
-            | SlashCommand::TestApproval => QueueDrain::Continue,
+            | SlashCommand::TestApproval
+            | SlashCommand::Usage => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New
             | SlashCommand::Clear

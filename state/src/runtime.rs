@@ -66,6 +66,7 @@ mod remote_control;
 #[cfg(test)]
 mod test_support;
 mod threads;
+mod usage;
 
 pub use device_key::DeviceKeyBindingRecord;
 pub use goals::ThreadGoalAccountingMode;
@@ -73,6 +74,7 @@ pub use goals::ThreadGoalAccountingOutcome;
 pub use goals::ThreadGoalUpdate;
 pub use remote_control::RemoteControlEnrollmentRecord;
 pub use threads::ThreadFilterOptions;
+pub use usage::UsageRecord;
 
 // "Partition" is the retained-log-content bucket we cap at 10 MiB:
 // - one bucket per non-null thread_id

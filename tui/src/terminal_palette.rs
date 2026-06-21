@@ -46,6 +46,23 @@ pub fn best_color(target: (u8, u8, u8)) -> Color {
     }
 }
 
+/// Returns the closest color to the target color for a known terminal color level.
+pub fn best_color_for_level(target: (u8, u8, u8), color_level: StdoutColorLevel) -> Color {
+    if color_level == StdoutColorLevel::TrueColor {
+        rgb_color(target)
+    } else if color_level == StdoutColorLevel::Ansi256
+        && let Some((i, _)) = xterm_fixed_colors().min_by(|(_, a), (_, b)| {
+            perceptual_distance(*a, target)
+                .partial_cmp(&perceptual_distance(*b, target))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    {
+        indexed_color(i as u8)
+    } else {
+        Color::default()
+    }
+}
+
 pub fn requery_default_colors() {
     imp::requery_default_colors();
 }

@@ -692,7 +692,34 @@ impl Session {
                     turn_id: turn_context.sub_id.clone(),
                     thread_id: self.conversation_id.to_string(),
                     token_usage: turn_token_usage.clone(),
+                    provider_id: turn_context.config.model_provider_id.clone(),
                 });
+            if let Some(state_db) = &self.services.state_db {
+                let today = chrono::Utc::now().date_naive().to_string();
+                let (_, duration_ms) = turn_context
+                    .turn_timing_state
+                    .completed_at_and_duration_ms()
+                    .await;
+                let turn_duration_sec = duration_ms.unwrap_or(0) / 1000;
+                let usage_record = agere_state::UsageRecord {
+                    provider_id: turn_context.config.model_provider_id.clone(),
+                    date: today,
+                    total_tokens: turn_token_usage.total_tokens,
+                    input_tokens: turn_token_usage.input_tokens,
+                    cached_input_tokens: turn_token_usage.cached_input_tokens,
+                    output_tokens: turn_token_usage.output_tokens,
+                    reasoning_output_tokens: turn_token_usage.reasoning_output_tokens,
+                    max_turn_duration_sec: turn_duration_sec,
+                };
+                if let Err(err) = state_db.record_usage(&usage_record).await {
+                    tracing::error!(
+                        %err,
+                        provider_id = %usage_record.provider_id,
+                        date = %usage_record.date,
+                        "failed to record provider usage"
+                    );
+                }
+            }
             self.services.session_telemetry.histogram(
                 TURN_TOKEN_USAGE_METRIC,
                 turn_token_usage.total_tokens,

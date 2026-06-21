@@ -53,6 +53,7 @@ pub use runtime::ThreadFilterOptions;
 pub use runtime::ThreadGoalAccountingMode;
 pub use runtime::ThreadGoalAccountingOutcome;
 pub use runtime::ThreadGoalUpdate;
+pub use runtime::UsageRecord;
 pub use runtime::logs_db_filename;
 pub use runtime::logs_db_path;
 pub use runtime::state_db_filename;

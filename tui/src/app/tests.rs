@@ -3951,6 +3951,57 @@ async fn provider_override_for_turn_is_thread_scoped_until_cleared() {
     assert_eq!(app.provider_override_for_turn(switched_thread_id), None);
 }
 
+#[tokio::test]
+async fn usage_output_defers_formatted_history_lines_while_transcript_overlay_is_open() {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.overlay = Some(Overlay::new_transcript(
+        Vec::new(),
+        app.keymap.pager.clone(),
+    ));
+    app.has_emitted_history_lines = true;
+    let cell = PlainHistoryCell::new(vec![Line::from("usage output")]);
+
+    let lines = app.display_lines_for_history_insert(&cell, 80);
+
+    assert_eq!(lines, vec![Line::from(""), Line::from("usage output")]);
+    app.deferred_history_lines.extend(lines);
+    assert_eq!(
+        app.deferred_history_lines,
+        vec![Line::from(""), Line::from("usage output")]
+    );
+    assert!(app.has_emitted_history_lines);
+}
+
+#[tokio::test]
+async fn usage_output_updates_history_separator_state_when_overlay_is_closed() {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let cell = PlainHistoryCell::new(vec![Line::from("usage output")]);
+
+    let lines = app.display_lines_for_history_insert(&cell, 80);
+
+    assert_eq!(lines, vec![Line::from("usage output")]);
+    assert!(app.has_emitted_history_lines);
+    assert!(
+        app.deferred_history_lines.is_empty(),
+        "closed overlay path should not buffer usage output"
+    );
+}
+
+#[tokio::test]
+async fn pending_usage_output_waits_for_stream_agent_cell_to_consolidate() {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+
+    assert!(!app.pending_usage_output_insertion_blocked());
+
+    app.transcript_cells.push(Arc::new(AgentMessageCell::new(
+        vec![Line::from("streaming agent output")],
+        /*is_first_line*/ true,
+    )));
+
+    assert!(app.pending_usage_output_insertion_blocked());
+    assert!(!app.chat_widget.usage_history_insertion_blocked());
+}
+
 async fn make_test_app() -> App {
     let (chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
     let config = chat_widget.config_ref().clone();

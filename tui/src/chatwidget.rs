@@ -838,6 +838,9 @@ pub(crate) struct ChatWidget {
     rate_limit_snapshots_by_limit_id: BTreeMap<String, RateLimitSnapshotDisplay>,
     refreshing_status_outputs: Vec<(u64, StatusHistoryHandle)>,
     next_status_refresh_request_id: u64,
+    next_token_activity_request_id: u64,
+    pending_token_activity: Option<crate::chatwidget::tokens::PendingTokenActivityOutput>,
+    completed_token_activity: Option<crate::chatwidget::tokens::PendingTokenActivityOutput>,
     plan_type: Option<PlanType>,
     agere_rate_limit_reached_type: Option<RateLimitReachedType>,
     rate_limit_warnings: RateLimitWarningState,
@@ -848,6 +851,13 @@ pub(crate) struct ChatWidget {
     stream_controller: Option<StreamController>,
     // Stream lifecycle controller for proposed plan output.
     plan_stream_controller: Option<PlanStreamController>,
+    /// Pending stream consolidation count that blocks usage card insertion.
+    ///
+    /// Each dispatched `ConsolidateAgentMessage` / `ConsolidateProposedPlan` event
+    /// increments this counter; the matching event handler decrements it. While
+    /// the counter is non-zero, deferred usage output must wait because the
+    /// transcript is still being mutated.
+    pending_stream_consolidations: usize,
     /// Holds the platform clipboard lease so copied text remains available while supported.
     clipboard_lease: Option<crate::clipboard_copy::ClipboardLease>,
     copy_last_response_binding: Vec<KeyBinding>,
@@ -2071,12 +2081,14 @@ impl ChatWidget {
             // Consolidate the run of streaming AgentMessageCells into a single AgentMarkdownCell
             // that can re-render from source on resize.
             if let Some(source) = source {
+                self.note_stream_consolidation_queued();
                 self.app_event_tx.send(AppEvent::ConsolidateAgentMessage {
                     source,
                     cwd: self.config.cwd.to_path_buf(),
                 });
             }
         }
+        self.request_pending_usage_output_insertion_after_stream_shutdown();
         self.adaptive_chunking.reset();
         if had_stream_controller && self.stream_controllers_idle() {
             self.app_event_tx.send(AppEvent::StopCommitAnimation);
@@ -2703,17 +2715,20 @@ impl ChatWidget {
             } else {
                 (None, None)
             };
+        self.request_pending_usage_output_insertion_after_stream_shutdown();
         if let Some(cell) = finalized_streamed_cell {
             self.add_boxed_history(cell);
             // TODO: Replace streamed output with the final plan item text if plan streaming is
             // removed or if we need to reconcile mismatches between streamed and final content.
             if let Some(source) = consolidated_plan_source {
+                self.note_stream_consolidation_queued();
                 self.app_event_tx
                     .send(AppEvent::ConsolidateProposedPlan(source));
             }
         } else if !plan_text.is_empty() {
             self.add_to_history(history_cell::new_proposed_plan(plan_text, &self.config.cwd));
         } else if let Some(source) = consolidated_plan_source {
+            self.note_stream_consolidation_queued();
             self.app_event_tx
                 .send(AppEvent::ConsolidateProposedPlan(source));
         }
@@ -2845,6 +2860,7 @@ impl ChatWidget {
                 self.add_boxed_history(cell);
             }
             if let Some(source) = source {
+                self.note_stream_consolidation_queued();
                 self.app_event_tx
                     .send(AppEvent::ConsolidateProposedPlan(source));
             }
@@ -4889,6 +4905,7 @@ impl ChatWidget {
         self.needs_final_message_separator = true;
         self.app_event_tx
             .send(AppEvent::InsertHistoryCell(Box::new(completed_cell)));
+        self.request_pending_usage_output_insertion();
     }
 
     fn finish_active_hook_cell_if_idle(&mut self) {
@@ -4898,6 +4915,7 @@ impl ChatWidget {
         if cell.is_empty() {
             self.active_hook_cell = None;
             self.bump_active_cell_revision();
+            self.request_pending_usage_output_insertion();
             return;
         }
         if cell.should_flush()
@@ -4907,6 +4925,7 @@ impl ChatWidget {
             self.needs_final_message_separator = true;
             self.app_event_tx
                 .send(AppEvent::InsertHistoryCell(Box::new(cell)));
+            self.request_pending_usage_output_insertion();
         }
     }
 
@@ -5087,6 +5106,7 @@ impl ChatWidget {
                     self.add_boxed_history(cell);
                 }
                 if let Some(source) = source {
+                    self.note_stream_consolidation_queued();
                     self.app_event_tx.send(AppEvent::ConsolidateAgentMessage {
                         source,
                         cwd: self.config.cwd.to_path_buf(),
@@ -5683,6 +5703,9 @@ impl ChatWidget {
             rate_limit_snapshots_by_limit_id: BTreeMap::new(),
             refreshing_status_outputs: Vec::new(),
             next_status_refresh_request_id: 0,
+            next_token_activity_request_id: 0,
+            pending_token_activity: None,
+            completed_token_activity: None,
             plan_type: initial_plan_type,
             agere_rate_limit_reached_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
@@ -5691,6 +5714,7 @@ impl ChatWidget {
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
             plan_stream_controller: None,
+            pending_stream_consolidations: 0,
             clipboard_lease: None,
             copy_last_response_binding,
             running_commands: HashMap::new(),
@@ -6263,6 +6287,7 @@ impl ChatWidget {
         if let Some(active) = self.active_cell.take() {
             self.needs_final_message_separator = true;
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
+            self.request_pending_usage_output_insertion();
         }
     }
 
@@ -12375,6 +12400,15 @@ impl ChatWidget {
         let mut flex = FlexRenderable::new();
         flex.push(/*flex*/ 1, active_cell_renderable);
         flex.push(/*flex*/ 0, active_hook_cell_renderable);
+        if let Some(cell) = self.pending_token_activity_output() {
+            flex.push(
+                /*flex*/ 1,
+                RenderableItem::Owned(Box::new(crate::history_cell::HistoryCellRenderable(cell)))
+                    .inset(Insets::tlbr(
+                        /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
+                    )),
+            );
+        }
         flex.push(
             /*flex*/ 0,
             RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(
@@ -12624,3 +12658,5 @@ pub(crate) fn show_review_commit_picker_with_entries(
 
 #[cfg(test)]
 pub(crate) mod tests;
+pub(crate) mod tokens;
+pub(crate) mod tokens_chart;

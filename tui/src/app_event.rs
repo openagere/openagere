@@ -263,6 +263,25 @@ pub(crate) enum AppEvent {
         result: Result<Vec<RateLimitSnapshot>, String>,
     },
 
+    /// Request to refresh the token activity chart.
+    RefreshTokenActivity {
+        request_id: u64,
+    },
+
+    /// Result of loading token activity data.
+    TokenActivityLoaded {
+        request_id: u64,
+        result: Result<agere_app_server_protocol::GetProviderUsageResponse, String>,
+    },
+
+    /// Open the token activity card (from usage menu).
+    OpenTokenActivity,
+
+    /// Commit pending usage output to the history.
+    CommitPendingUsageOutput,
+
+    /// Commit pending usage output after stream shutdown.
+    CommitPendingUsageOutputAfterStreamShutdown,
     /// Send a user-confirmed request to notify the workspace owner.
     SendAddCreditsNudgeEmail {
         credit_type: AddCreditsNudgeCreditType,

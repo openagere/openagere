@@ -70,7 +70,7 @@ impl App {
         self.deferred_history_lines.clear();
     }
 
-    fn display_lines_for_history_insert(
+    pub(super) fn display_lines_for_history_insert(
         &mut self,
         cell: &dyn HistoryCell,
         width: u16,

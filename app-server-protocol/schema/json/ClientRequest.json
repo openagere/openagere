@@ -6261,6 +6261,29 @@
         },
         "method": {
           "enum": [
+            "usage/read"
+          ],
+          "title": "Usage/readRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "id",
+        "method"
+      ],
+      "title": "Usage/readRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
             "fuzzyFileSearch"
           ],
           "title": "FuzzyFileSearchRequestMethod",

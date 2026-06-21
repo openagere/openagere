@@ -406,6 +406,7 @@ mod apps_list_helpers;
 mod plugin_app_helpers;
 mod plugin_mcp_oauth;
 mod plugins;
+mod provider_usage;
 mod token_usage_replay;
 
 use crate::filters::compute_source_filters;
@@ -1232,6 +1233,10 @@ impl AgereMessageProcessor {
                 self.get_account(to_connection_request_id(request_id), params)
                     .await;
             }
+            ClientRequest::GetProviderUsage { request_id, .. } => {
+                self.get_provider_usage(to_connection_request_id(request_id))
+                    .await;
+            }
             ClientRequest::GitDiffToRemote { request_id, params } => {
                 self.git_diff_to_origin(to_connection_request_id(request_id), params.cwd)
                     .await;
@@ -1916,6 +1921,35 @@ impl AgereMessageProcessor {
     async fn get_account(&self, request_id: ConnectionRequestId, params: GetAccountParams) {
         let result = self.get_account_response(params).await;
         self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn get_provider_usage(&self, request_id: ConnectionRequestId) {
+        let result = self.get_provider_usage_response().await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn get_provider_usage_response(
+        &self,
+    ) -> Result<agere_app_server_protocol::GetProviderUsageResponse, JSONRPCErrorError> {
+        let state_db_ctx = match agere_state::StateRuntime::init(
+            self.config.sqlite_home.clone(),
+            self.config.model_provider_id.clone(),
+        )
+        .await
+        {
+            Ok(ctx) => ctx,
+            Err(err) => {
+                return Err(internal_error(format!(
+                    "failed to open state db for usage query: {err}"
+                )));
+            }
+        };
+        let records = state_db_ctx
+            .query_all_usage_records()
+            .await
+            .map_err(|err| internal_error(format!("failed to query usage: {err}")))?;
+
+        Ok(provider_usage::build_provider_usage_response(&records))
     }
 
     async fn get_account_response(

@@ -87,6 +87,7 @@ pub struct TurnTokenUsageFact {
     pub turn_id: String,
     pub thread_id: String,
     pub token_usage: TokenUsage,
+    pub provider_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]

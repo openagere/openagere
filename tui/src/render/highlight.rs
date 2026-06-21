@@ -298,6 +298,18 @@ fn scope_background_rgb(highlighter: &Highlighter<'_>, scope_name: &str) -> Opti
     Some((bg.r, bg.g, bg.b))
 }
 
+/// Query the active syntax theme for the first foreground style provided by the
+/// supplied TextMate scopes.
+pub(crate) fn foreground_style_for_scopes(scope_names: &[&str]) -> Option<Style> {
+    let theme = current_syntax_theme();
+    let highlighter = Highlighter::new(&theme);
+    scope_names.iter().find_map(|scope_name| {
+        let scope = Scope::new(scope_name).ok()?;
+        let fg = highlighter.style_mod_for_stack(&[scope]).foreground?;
+        convert_syntect_color(fg).map(|fg| Style::default().fg(fg))
+    })
+}
+
 /// Return the configured kebab-case theme name when it resolves; otherwise
 /// return the adaptive auto-detected default theme name.
 ///

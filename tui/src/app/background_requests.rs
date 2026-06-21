@@ -9,6 +9,8 @@ use agere_app_server_protocol::MarketplaceAddParams;
 use agere_app_server_protocol::MarketplaceAddResponse;
 use agere_utils_fs::AbsolutePathBuf;
 
+const TOKEN_ACTIVITY_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 fn format_error_chain(err: color_eyre::Report) -> String {
     err.chain()
         .map(ToString::to_string)
@@ -419,6 +421,41 @@ impl App {
             overlay.replace_cells(self.transcript_cells.clone());
         }
     }
+
+    pub(super) fn refresh_token_activity(
+        &mut self,
+        app_server: &AppServerSession,
+        request_id: u64,
+    ) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let result = tokio::time::timeout(
+                TOKEN_ACTIVITY_FETCH_TIMEOUT,
+                fetch_provider_usage(request_handle),
+            )
+            .await
+            .map_err(|_| "usage/read timed out in TUI".to_string())
+            .and_then(|result| result.map_err(|err| err.to_string()));
+            app_event_tx.send(AppEvent::TokenActivityLoaded { request_id, result });
+        });
+    }
+}
+
+pub(super) async fn fetch_provider_usage(
+    request_handle: AppServerRequestHandle,
+) -> color_eyre::Result<agere_app_server_protocol::GetProviderUsageResponse> {
+    use agere_app_server_protocol::ClientRequest;
+    use agere_app_server_protocol::RequestId;
+    use uuid::Uuid;
+    let request_id = RequestId::String(format!("provider-usage-{}", Uuid::new_v4()));
+    request_handle
+        .request_typed(ClientRequest::GetProviderUsage {
+            request_id,
+            params: None,
+        })
+        .await
+        .wrap_err("usage/read failed in TUI")
 }
 
 pub(super) async fn fetch_all_mcp_server_statuses(

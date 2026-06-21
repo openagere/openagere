@@ -805,6 +805,11 @@ client_request_definitions! {
         response: v2::GetAccountResponse,
     },
 
+    GetProviderUsage => "usage/read" {
+        params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
+        serialization: None,
+        response: v2::GetProviderUsageResponse,
+    },
     /// DEPRECATED APIs below
     GetConversationSummary {
         params: v1::GetConversationSummaryParams,

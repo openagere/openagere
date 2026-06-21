@@ -7834,6 +7834,95 @@ pub struct ConfigWarningNotification {
     pub range: Option<TextRange>,
 }
 
+// --- Provider usage tracking (/usage) ---
+
+/// Per-provider token usage summary with daily breakdown.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProviderUsageSummary {
+    /// Provider identifier (e.g. "openai", "anthropic").
+    pub provider_id: String,
+    /// Total tokens consumed across all recorded days.
+    #[ts(type = "number")]
+    pub total_tokens: i64,
+    /// Total input tokens.
+    #[ts(type = "number")]
+    pub input_tokens: i64,
+    /// Total cached input tokens.
+    #[ts(type = "number")]
+    pub cached_input_tokens: i64,
+    /// Total output tokens.
+    #[ts(type = "number")]
+    pub output_tokens: i64,
+    /// Total reasoning output tokens.
+    #[ts(type = "number")]
+    pub reasoning_output_tokens: i64,
+    /// Highest single-day total across all dates.
+    #[ts(type = "number")]
+    pub peak_daily_tokens: i64,
+    /// Daily usage buckets sorted by date ascending.
+    pub daily_buckets: Vec<ProviderUsageDailyBucket>,
+}
+
+/// A single day's token usage for a provider.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProviderUsageDailyBucket {
+    /// ISO-8601 date string (YYYY-MM-DD).
+    pub date: String,
+    /// Total tokens used on this date.
+    #[ts(type = "number")]
+    pub total_tokens: i64,
+    /// Input tokens used on this date.
+    #[ts(type = "number")]
+    pub input_tokens: i64,
+    /// Cached input tokens used on this date.
+    #[ts(type = "number")]
+    pub cached_input_tokens: i64,
+    /// Output tokens used on this date.
+    #[ts(type = "number")]
+    pub output_tokens: i64,
+    /// Reasoning output tokens used on this date.
+    #[ts(type = "number")]
+    pub reasoning_output_tokens: i64,
+}
+
+/// Response for `usage/read` — aggregated token usage broken down by provider.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct GetProviderUsageResponse {
+    /// Per-provider summaries.
+    pub providers: Vec<ProviderUsageSummary>,
+    /// Aggregate across all providers.
+    pub total: ProviderUsageTotal,
+}
+
+/// Aggregate totals across all providers.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProviderUsageTotal {
+    #[ts(type = "number")]
+    pub total_tokens: i64,
+    #[ts(type = "number")]
+    pub input_tokens: i64,
+    #[ts(type = "number")]
+    pub cached_input_tokens: i64,
+    #[ts(type = "number")]
+    pub output_tokens: i64,
+    #[ts(type = "number")]
+    pub reasoning_output_tokens: i64,
+    #[ts(type = "number")]
+    pub peak_daily_tokens: i64,
+    /// Wall-clock seconds of the longest single turn recorded, or `None` if no turns exist.
+    #[ts(type = "number | null")]
+    pub longest_running_turn_sec: Option<i64>,
+    /// Daily totals across all providers, sorted by date ascending.
+    pub daily_buckets: Vec<ProviderUsageDailyBucket>,
+}
 #[cfg(test)]
 mod tests {
     use super::*;

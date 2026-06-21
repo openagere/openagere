@@ -4,7 +4,24 @@ use crate::terminal_palette::best_color;
 use crate::terminal_palette::default_bg;
 use ratatui::style::Color;
 use ratatui::style::Style;
+use ratatui::style::Stylize;
 use ratatui::text::Line;
+
+const LIGHT_BG_ACCENT_RGB: (u8, u8, u8) = (0, 95, 135);
+
+/// Returns the shared accent style for active or selected TUI controls.
+pub(crate) fn accent_style() -> Style {
+    accent_style_for(default_bg())
+}
+
+/// Returns the shared accent style for the provided terminal background.
+pub(crate) fn accent_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
+    if terminal_bg.is_some_and(is_light) {
+        Style::default().fg(best_color(LIGHT_BG_ACCENT_RGB)).bold()
+    } else {
+        Style::default().fg(Color::Cyan).bold()
+    }
+}
 
 pub fn user_message_style() -> Style {
     user_message_style_for(default_bg())
