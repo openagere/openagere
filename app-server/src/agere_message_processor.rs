@@ -369,6 +369,7 @@ use agere_thread_store::ThreadStore;
 use agere_thread_store::ThreadStoreError;
 use agere_thread_store::UpdateThreadMetadataParams as StoreUpdateThreadMetadataParams;
 use agere_utils_fs::AbsolutePathBuf;
+use agere_utils_fs::paths_match_after_normalization;
 use agere_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use chrono::DateTime;
 use chrono::Duration as ChronoDuration;
@@ -533,6 +534,7 @@ pub(crate) struct AgereMessageProcessor {
     background_tasks: TaskTracker,
     feedback: AgereFeedback,
     log_db: Option<LogDbLayer>,
+    state_db: Option<StateDbHandle>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -685,11 +687,15 @@ pub(crate) struct AgereMessageProcessorArgs {
     pub(crate) config_manager: ConfigManager,
     pub(crate) feedback: AgereFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
+    pub(crate) state_db: Option<StateDbHandle>,
 }
 
-fn configured_thread_store(config: &Config) -> Arc<dyn ThreadStore> {
+fn configured_thread_store(
+    config: &Config,
+    state_db: Option<StateDbHandle>,
+) -> Arc<dyn ThreadStore> {
     match &config.experimental_thread_store {
-        ThreadStoreConfig::Local => Arc::new(configured_local_thread_store(config)),
+        ThreadStoreConfig::Local => Arc::new(configured_local_thread_store(config, state_db)),
         ThreadStoreConfig::Remote { endpoint } => Arc::new(RemoteThreadStore::new(endpoint)),
         #[cfg(debug_assertions)]
         ThreadStoreConfig::InMemory { id } => InMemoryThreadStore::for_id(id),
@@ -745,8 +751,16 @@ fn environment_selection_error_message(err: AgereErr) -> String {
     }
 }
 
-fn configured_local_thread_store(config: &Config) -> LocalThreadStore {
-    LocalThreadStore::new(agere_rollout::RolloutConfig::from_view(config))
+fn configured_local_thread_store(
+    config: &Config,
+    state_db: Option<StateDbHandle>,
+) -> LocalThreadStore {
+    LocalThreadStore::new_with_state_db(
+        agere_rollout::RolloutConfig::from_view(config),
+        state_db.filter(|state_db| {
+            paths_match_after_normalization(state_db.agere_home(), config.sqlite_home.as_path())
+        }),
+    )
 }
 
 impl AgereMessageProcessor {
@@ -821,6 +835,7 @@ impl AgereMessageProcessor {
             config_manager,
             feedback,
             log_db,
+            state_db,
         } = args;
         Self {
             auth_manager,
@@ -828,7 +843,7 @@ impl AgereMessageProcessor {
             outgoing: outgoing.clone(),
             analytics_events_client,
             arg0_paths,
-            thread_store: configured_thread_store(&config),
+            thread_store: configured_thread_store(&config, state_db.clone()),
             config,
             config_manager,
             active_login: Arc::new(Mutex::new(None)),
@@ -843,6 +858,7 @@ impl AgereMessageProcessor {
             background_tasks: TaskTracker::new(),
             feedback,
             log_db,
+            state_db,
         }
     }
 
@@ -4427,6 +4443,8 @@ impl AgereMessageProcessor {
             let thread_goal_state_db = if emit_thread_goal_update {
                 if let Some(state_db) = existing_thread.state_db() {
                     Some(state_db)
+                } else if let Some(state_db) = self.state_db.clone() {
+                    Some(state_db)
                 } else {
                     open_state_db_for_direct_thread_lookup(&self.config).await
                 }
@@ -4745,7 +4763,7 @@ impl AgereMessageProcessor {
 
             let fallback_model_provider = config.model_provider_id.clone();
             let instruction_sources = Self::instruction_sources_from_config(&config).await;
-            let fork_thread_store = configured_thread_store(&config);
+            let fork_thread_store = configured_thread_store(&config, self.state_db.clone());
 
             let NewThread {
                 thread_id,

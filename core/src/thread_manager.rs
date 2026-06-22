@@ -52,6 +52,7 @@ use agere_protocol::protocol::TurnAbortedEvent;
 use agere_protocol::protocol::TurnEnvironmentSelection;
 use agere_protocol::protocol::W3cTraceContext;
 use agere_rollout::RolloutConfig;
+use agere_rollout::state_db::StateDbHandle;
 use agere_state::DirectionalThreadSpawnEdgeStatus;
 #[cfg(debug_assertions)]
 use agere_thread_store::InMemoryThreadStore;
@@ -59,6 +60,7 @@ use agere_thread_store::LocalThreadStore;
 use agere_thread_store::RemoteThreadStore;
 use agere_thread_store::ThreadStore;
 use agere_utils_fs::AbsolutePathBuf;
+use agere_utils_fs::paths_match_after_normalization;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
@@ -237,6 +239,7 @@ pub(crate) struct ThreadManagerState {
     skills_watcher: Arc<SkillsWatcher>,
     session_source: SessionSource,
     analytics_events_client: Option<AnalyticsEventsClient>,
+    state_db: Option<StateDbHandle>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
 }
@@ -258,11 +261,17 @@ pub fn build_models_manager(
     )
 }
 
-fn configured_thread_store(config: &Config) -> Arc<dyn ThreadStore> {
+fn configured_thread_store(
+    config: &Config,
+    state_db: Option<StateDbHandle>,
+) -> Arc<dyn ThreadStore> {
     match &config.experimental_thread_store {
-        ThreadStoreConfig::Local => {
-            Arc::new(LocalThreadStore::new(RolloutConfig::from_view(config)))
-        }
+        ThreadStoreConfig::Local => Arc::new(LocalThreadStore::new_with_state_db(
+            RolloutConfig::from_view(config),
+            state_db.filter(|state_db| {
+                paths_match_after_normalization(state_db.agere_home(), config.sqlite_home.as_path())
+            }),
+        )),
         ThreadStoreConfig::Remote { endpoint } => Arc::new(RemoteThreadStore::new(endpoint)),
         #[cfg(debug_assertions)]
         ThreadStoreConfig::InMemory { id } => InMemoryThreadStore::for_id(id),
@@ -277,6 +286,27 @@ impl ThreadManager {
         collaboration_modes_config: CollaborationModesConfig,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: Option<AnalyticsEventsClient>,
+    ) -> Self {
+        Self::new_with_state_db(
+            config,
+            auth_manager,
+            session_source,
+            collaboration_modes_config,
+            environment_manager,
+            analytics_events_client,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_state_db(
+        config: &Config,
+        auth_manager: Arc<AuthManager>,
+        session_source: SessionSource,
+        collaboration_modes_config: CollaborationModesConfig,
+        environment_manager: Arc<EnvironmentManager>,
+        analytics_events_client: Option<AnalyticsEventsClient>,
+        state_db: Option<StateDbHandle>,
     ) -> Self {
         let agere_home = config.agere_home.clone();
         let restriction_product = session_source.restriction_product();
@@ -309,6 +339,7 @@ impl ThreadManager {
                 auth_manager,
                 session_source,
                 analytics_events_client,
+                state_db,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -347,6 +378,22 @@ impl ThreadManager {
         agere_home: PathBuf,
         environment_manager: Arc<EnvironmentManager>,
     ) -> Self {
+        Self::with_models_provider_home_and_state_for_tests(
+            auth,
+            provider,
+            agere_home,
+            environment_manager,
+            None,
+        )
+    }
+
+    pub(crate) fn with_models_provider_home_and_state_for_tests(
+        auth: AgereAuth,
+        provider: ModelProviderInfo,
+        agere_home: PathBuf,
+        environment_manager: Arc<EnvironmentManager>,
+        state_db: Option<StateDbHandle>,
+    ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let auth_manager = AuthManager::from_auth_for_testing(auth);
         let skills_agere_home = match AbsolutePathBuf::from_absolute_path_checked(&agere_home) {
@@ -384,6 +431,7 @@ impl ThreadManager {
                 auth_manager,
                 session_source: SessionSource::Exec,
                 analytics_events_client: None,
+                state_db,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -562,7 +610,7 @@ impl ThreadManager {
         &self,
         options: StartThreadOptions,
     ) -> AgereResult<NewThread> {
-        let thread_store = configured_thread_store(&options.config);
+        let thread_store = configured_thread_store(&options.config, self.state.state_db.clone());
         let session_source = options
             .session_source
             .unwrap_or_else(|| self.state.session_source.clone());
@@ -611,7 +659,7 @@ impl ThreadManager {
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> AgereResult<NewThread> {
-        let thread_store = configured_thread_store(&config);
+        let thread_store = configured_thread_store(&config, self.state.state_db.clone());
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
@@ -637,7 +685,7 @@ impl ThreadManager {
         config: Config,
         user_shell_override: crate::shell::Shell,
     ) -> AgereResult<NewThread> {
-        let thread_store = configured_thread_store(&config);
+        let thread_store = configured_thread_store(&config, self.state.state_db.clone());
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
@@ -666,7 +714,7 @@ impl ThreadManager {
         user_shell_override: crate::shell::Shell,
     ) -> AgereResult<NewThread> {
         let initial_history = RolloutRecorder::get_rollout_history(&rollout_path).await?;
-        let thread_store = configured_thread_store(&config);
+        let thread_store = configured_thread_store(&config, self.state.state_db.clone());
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
@@ -804,7 +852,7 @@ impl ThreadManager {
     ) -> AgereResult<NewThread> {
         let interrupted_marker = InterruptedTurnHistoryMarker::from_config(&config);
         let history = fork_history_from_snapshot(snapshot, history, interrupted_marker);
-        let thread_store = configured_thread_store(&config);
+        let thread_store = configured_thread_store(&config, self.state.state_db.clone());
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
@@ -918,7 +966,7 @@ impl ThreadManagerState {
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> AgereResult<NewThread> {
-        let thread_store = configured_thread_store(&config);
+        let thread_store = configured_thread_store(&config, self.state_db.clone());
         let environments = environments.unwrap_or_else(|| {
             default_thread_environment_selections(self.environment_manager.as_ref(), &config.cwd)
         });
@@ -951,7 +999,7 @@ impl ThreadManagerState {
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
     ) -> AgereResult<NewThread> {
         let initial_history = RolloutRecorder::get_rollout_history(&rollout_path).await?;
-        let thread_store = configured_thread_store(&config);
+        let thread_store = configured_thread_store(&config, self.state_db.clone());
         let environments =
             default_thread_environment_selections(self.environment_manager.as_ref(), &config.cwd);
         Box::pin(self.spawn_thread_with_source(
@@ -985,7 +1033,7 @@ impl ThreadManagerState {
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> AgereResult<NewThread> {
-        let thread_store = configured_thread_store(&config);
+        let thread_store = configured_thread_store(&config, self.state_db.clone());
         let environments = environments.unwrap_or_else(|| {
             default_thread_environment_selections(self.environment_manager.as_ref(), &config.cwd)
         });

@@ -5,6 +5,7 @@ use crate::plugins::test_support::TEST_CURATED_PLUGIN_CACHE_VERSION;
 use crate::plugins::test_support::write_curated_plugin_sha;
 use crate::plugins::test_support::write_file;
 use crate::plugins::test_support::write_openai_curated_marketplace;
+use agere_core_plugins::remote::remote_plugin_backend_supported;
 use agere_core_plugins::startup_sync::curated_plugins_repo_path;
 use agere_login::AgereAuth;
 use agere_login::AuthManager;
@@ -21,6 +22,10 @@ use wiremock::matchers::path;
 
 #[tokio::test]
 async fn startup_remote_plugin_sync_writes_marker_and_reconciles_state() {
+    if !remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempdir().expect("tempdir");
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_openai_curated_marketplace(&curated_root, &["linear"]);

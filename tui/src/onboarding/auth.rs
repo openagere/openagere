@@ -1026,6 +1026,7 @@ mod tests {
             loader_overrides: Default::default(),
             feedback: agere_feedback::AgereFeedback::new(),
             log_db: None,
+            state_db: None,
             environment_manager: Arc::new(
                 agere_app_server_client::EnvironmentManager::default_for_tests(),
             ),

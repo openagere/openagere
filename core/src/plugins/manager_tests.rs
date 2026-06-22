@@ -19,6 +19,7 @@ use agere_core_plugins::installed_marketplaces::marketplace_install_root;
 use agere_core_plugins::loader::refresh_non_curated_plugin_cache;
 use agere_core_plugins::loader::refresh_non_curated_plugin_cache_force_reinstall;
 use agere_core_plugins::marketplace::MarketplacePluginInstallPolicy;
+use agere_core_plugins::remote::remote_plugin_backend_supported;
 use agere_core_plugins::startup_sync::curated_plugins_repo_path;
 use agere_login::AgereAuth;
 use agere_protocol::protocol::Product;
@@ -37,6 +38,52 @@ use wiremock::matchers::path;
 use wiremock::matchers::query_param;
 
 const MAX_CAPABILITY_SUMMARY_DESCRIPTION_LEN: usize = 1024;
+
+#[tokio::test]
+async fn plugin_startup_tasks_skip_remote_warmups_when_remote_plugins_are_not_supported() {
+    if remote_plugin_backend_supported() {
+        return;
+    }
+
+    use agere_login::AuthManager;
+    use std::sync::Arc;
+    use tracing::Level;
+    use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_test::internal::MockWriter;
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+"#,
+    );
+    let config = load_config(tmp.path(), tmp.path()).await;
+    let manager = Arc::new(PluginsManager::new(tmp.path().to_path_buf()));
+    let auth_manager =
+        AuthManager::from_auth_for_testing(AgereAuth::create_dummy_chatgpt_auth_for_testing());
+    let buffer: &'static std::sync::Mutex<Vec<u8>> =
+        Box::leak(Box::new(std::sync::Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::fmt()
+        .with_level(true)
+        .with_ansi(false)
+        .with_max_level(Level::INFO)
+        .with_span_events(FmtSpan::NONE)
+        .with_writer(MockWriter::new(buffer))
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    manager.maybe_start_plugin_startup_tasks_for_config(&config, auth_manager);
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    let logs = String::from_utf8(buffer.lock().expect("buffer lock").clone())
+        .expect("logs should be utf8");
+    assert!(!logs.contains("starting remote plugin sync"));
+    assert!(!logs.contains("failed to warm featured plugin ids cache"));
+    assert!(!logs.contains("startup remote plugin sync failed"));
+}
 
 fn write_plugin_with_version(
     root: &Path,
@@ -2358,6 +2405,10 @@ enabled = true
 
 #[tokio::test]
 async fn sync_plugins_from_remote_reconciles_cache_and_config() {
+    if !remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_openai_curated_marketplace(&curated_root, &["linear", "gmail", "calendar"]);
@@ -2478,6 +2529,10 @@ enabled = true
 
 #[tokio::test]
 async fn sync_plugins_from_remote_additive_only_keeps_existing_plugins() {
+    if !remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_openai_curated_marketplace(&curated_root, &["linear", "gmail", "calendar"]);
@@ -2574,6 +2629,10 @@ enabled = true
 
 #[tokio::test]
 async fn sync_plugins_from_remote_ignores_unknown_remote_plugins() {
+    if !remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_openai_curated_marketplace(&curated_root, &["linear"]);
@@ -2631,6 +2690,10 @@ enabled = false
 
 #[tokio::test]
 async fn sync_plugins_from_remote_keeps_existing_plugins_when_install_fails() {
+    if !remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_openai_curated_marketplace(&curated_root, &["linear", "gmail"]);
@@ -2698,6 +2761,10 @@ enabled = false
 
 #[tokio::test]
 async fn sync_plugins_from_remote_uses_first_duplicate_local_plugin_entry() {
+    if !remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     let curated_root = curated_plugins_repo_path(tmp.path());
     write_curated_plugin_sha(tmp.path(), TEST_CURATED_PLUGIN_SHA);
@@ -2782,7 +2849,11 @@ plugins = true
 }
 
 #[tokio::test]
-async fn featured_plugin_ids_for_config_uses_restriction_product_query_param() {
+async fn featured_plugin_ids_for_config_returns_empty_when_remote_plugins_are_not_supported() {
+    if remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     write_file(
         &tmp.path().join(CONFIG_TOML_FILE),
@@ -2816,11 +2887,15 @@ plugins = true
         .await
         .unwrap();
 
-    assert_eq!(featured_plugin_ids, vec!["chat-plugin".to_string()]);
+    assert_eq!(featured_plugin_ids, Vec::<String>::new());
 }
 
 #[tokio::test]
-async fn featured_plugin_ids_for_config_defaults_query_param_to_agere() {
+async fn featured_plugin_ids_for_config_returns_empty_without_auth_when_backend_is_unsupported() {
+    if remote_plugin_backend_supported() {
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     write_file(
         &tmp.path().join(CONFIG_TOML_FILE),
@@ -2849,7 +2924,7 @@ plugins = true
         .await
         .unwrap();
 
-    assert_eq!(featured_plugin_ids, vec!["agere-plugin".to_string()]);
+    assert_eq!(featured_plugin_ids, Vec::<String>::new());
 }
 
 #[test]

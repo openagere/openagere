@@ -336,6 +336,89 @@ async fn start_thread_accepts_explicit_environment_when_default_environment_is_d
 }
 
 #[tokio::test]
+async fn start_thread_uses_process_state_db() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.agere_home = temp_dir.path().join("agere-home").abs();
+    config.cwd = config.agere_home.abs();
+    std::fs::create_dir_all(&config.agere_home).expect("create agere home");
+
+    let state_db = crate::init_state_db(&config)
+        .await
+        .expect("test state db should initialize");
+    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
+        AgereAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        config.agere_home.to_path_buf(),
+        Arc::new(agere_exec_server::EnvironmentManager::default_for_tests()),
+        Some(state_db.clone()),
+    );
+
+    let thread = manager
+        .start_thread(config)
+        .await
+        .expect("start thread with process state db");
+
+    let thread_state_db = thread
+        .thread
+        .state_db()
+        .expect("thread should receive process state db");
+    assert!(Arc::ptr_eq(&thread_state_db, &state_db));
+
+    thread
+        .thread
+        .shutdown_and_wait()
+        .await
+        .expect("shutdown thread");
+}
+
+#[tokio::test]
+async fn start_thread_reinitializes_state_db_when_sqlite_home_changes() {
+    let temp_dir = tempdir().expect("tempdir");
+    let home_a = temp_dir.path().join("agere-home-a").abs();
+    let home_b = temp_dir.path().join("agere-home-b").abs();
+    std::fs::create_dir_all(&home_a).expect("create agere home a");
+    std::fs::create_dir_all(&home_b).expect("create agere home b");
+    let mut config_a = test_config().await;
+    config_a.agere_home = home_a.clone();
+    config_a.sqlite_home = home_a.to_path_buf();
+    config_a.cwd = home_a.clone();
+    let mut config_b = config_a.clone();
+    config_b.agere_home = home_b.clone();
+    config_b.sqlite_home = home_b.to_path_buf();
+    config_b.cwd = home_b.clone();
+
+    let state_db = crate::init_state_db(&config_a)
+        .await
+        .expect("test state db should initialize");
+    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
+        AgereAuth::from_api_key("dummy"),
+        config_a.model_provider.clone(),
+        config_a.agere_home.to_path_buf(),
+        Arc::new(agere_exec_server::EnvironmentManager::default_for_tests()),
+        Some(state_db.clone()),
+    );
+
+    let thread = manager
+        .start_thread(config_b.clone())
+        .await
+        .expect("start thread with reloaded sqlite home");
+
+    let thread_state_db = thread
+        .thread
+        .state_db()
+        .expect("thread should initialize state db for new sqlite home");
+    assert!(!Arc::ptr_eq(&thread_state_db, &state_db));
+    assert_eq!(thread_state_db.agere_home(), config_b.sqlite_home.as_path());
+
+    thread
+        .thread
+        .shutdown_and_wait()
+        .await
+        .expect("shutdown thread");
+}
+
+#[tokio::test]
 async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
     let temp_dir = tempdir().expect("tempdir");
     let mut config = test_config().await;

@@ -17,10 +17,22 @@ use serde_json::Value;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
+use tracing::info;
 use tracing::warn;
 
 /// Core-facing handle to the SQLite-backed state runtime.
 pub type StateDbHandle = Arc<agere_state::StateRuntime>;
+
+#[cfg(not(test))]
+const STARTUP_BACKFILL_POLL_INTERVAL: Duration = Duration::from_secs(1);
+#[cfg(test)]
+const STARTUP_BACKFILL_POLL_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(not(test))]
+const STARTUP_BACKFILL_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const STARTUP_BACKFILL_WAIT_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Initialize the state runtime for thread state persistence and backfill checks.
 pub async fn init(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
@@ -40,24 +52,61 @@ pub async fn init(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
             return None;
         }
     };
-    let backfill_state = match runtime.get_backfill_state().await {
-        Ok(state) => state,
-        Err(err) => {
-            warn!(
-                "failed to read backfill state at {}: {err}",
-                config.agere_home.display()
-            );
-            return None;
-        }
-    };
-    if backfill_state.status != agere_state::BackfillStatus::Complete {
-        let runtime_for_backfill = runtime.clone();
-        let config = config.clone();
+    if let Err(err) = wait_for_backfill_gate(runtime.clone(), config, |runtime, config| {
         tokio::spawn(async move {
-            metadata::backfill_sessions(runtime_for_backfill.as_ref(), &config).await;
-        });
+            metadata::backfill_sessions(runtime.as_ref(), &config).await;
+        })
+    })
+    .await
+    {
+        warn!("failed to initialize state runtime: {err:#}");
+        return None;
     }
     Some(runtime)
+}
+
+async fn wait_for_backfill_gate(
+    runtime: StateDbHandle,
+    config: RolloutConfig,
+    spawn_backfill: impl FnOnce(StateDbHandle, RolloutConfig) -> tokio::task::JoinHandle<()>,
+) -> anyhow::Result<()> {
+    let wait_started = Instant::now();
+    let mut spawn_backfill = Some(spawn_backfill);
+    loop {
+        let backfill_state = match runtime.get_backfill_state().await {
+            Ok(state) => state,
+            Err(err) => {
+                anyhow::bail!(
+                    "failed to read backfill state at {}: {err}",
+                    config.agere_home.display()
+                );
+            }
+        };
+        if backfill_state.status == agere_state::BackfillStatus::Complete {
+            return Ok(());
+        }
+
+        if let Some(spawn_backfill) = spawn_backfill.take() {
+            let _backfill_task = spawn_backfill(runtime.clone(), config.clone());
+        }
+        if wait_started.elapsed() >= STARTUP_BACKFILL_WAIT_TIMEOUT {
+            warn!(
+                "timed out waiting for state db backfill at {} after {:?} (status: {}); continuing with state db handle while state-db-only reads remain gated on backfill completion",
+                config.agere_home.display(),
+                STARTUP_BACKFILL_WAIT_TIMEOUT,
+                backfill_state.status.as_str()
+            );
+            return Ok(());
+        }
+
+        info!(
+            "state db backfill is {} at {}; waiting up to {:?} before retrying startup initialization",
+            backfill_state.status.as_str(),
+            config.agere_home.display(),
+            STARTUP_BACKFILL_WAIT_TIMEOUT,
+        );
+        tokio::time::sleep(STARTUP_BACKFILL_POLL_INTERVAL).await;
+    }
 }
 
 /// Get the DB if the feature is enabled and the DB exists.

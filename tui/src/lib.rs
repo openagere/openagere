@@ -44,6 +44,7 @@ use agere_protocol::protocol::RolloutItem;
 use agere_protocol::protocol::RolloutLine;
 use agere_protocol::protocol::TurnContextItem;
 use agere_rollout::read_session_meta_line;
+use agere_rollout::state_db::StateDbHandle;
 use agere_rollout::state_db::get_state_db;
 use agere_state::log_db;
 use agere_utils_fs::AbsolutePathBuf;
@@ -266,6 +267,7 @@ async fn start_embedded_app_server(
     loader_overrides: LoaderOverrides,
     feedback: agere_feedback::AgereFeedback,
     log_db: Option<log_db::LogDbLayer>,
+    state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<InProcessAppServerClient> {
     start_embedded_app_server_with(
@@ -275,6 +277,7 @@ async fn start_embedded_app_server(
         loader_overrides,
         feedback,
         log_db,
+        state_db,
         environment_manager,
         InProcessAppServerClient::start,
     )
@@ -391,6 +394,7 @@ async fn start_app_server(
     loader_overrides: LoaderOverrides,
     feedback: agere_feedback::AgereFeedback,
     log_db: Option<log_db::LogDbLayer>,
+    state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<AppServerClient> {
     match target {
@@ -401,6 +405,7 @@ async fn start_app_server(
             loader_overrides,
             feedback,
             log_db,
+            state_db,
             environment_manager,
         )
         .await
@@ -425,6 +430,7 @@ pub(crate) async fn start_app_server_for_picker(
         LoaderOverrides::default(),
         agere_feedback::AgereFeedback::new(),
         /*log_db*/ None,
+        /*state_db*/ None,
         environment_manager,
     )
     .await?;
@@ -451,6 +457,7 @@ async fn start_embedded_app_server_with<F, Fut>(
     loader_overrides: LoaderOverrides,
     feedback: agere_feedback::AgereFeedback,
     log_db: Option<log_db::LogDbLayer>,
+    state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
     start_client: F,
 ) -> color_eyre::Result<InProcessAppServerClient>
@@ -475,6 +482,7 @@ where
         loader_overrides,
         feedback,
         log_db,
+        state_db,
         environment_manager,
         config_warnings,
         session_source: agere_protocol::protocol::SessionSource::Cli,
@@ -932,7 +940,8 @@ pub async fn run_main(
 
     let otel_tracing_layer = otel.as_ref().and_then(|o| o.tracing_layer());
 
-    let log_db = get_state_db(&config).await.map(log_db::start);
+    let state_db = agere_rollout::state_db::init(&config).await;
+    let log_db = state_db.clone().map(log_db::start);
     let log_db_layer = log_db
         .clone()
         .map(|layer| layer.with_filter(Targets::new().with_default(Level::TRACE)));
@@ -959,6 +968,7 @@ pub async fn run_main(
         cloud_requirements,
         feedback,
         log_db,
+        state_db,
         remote_url,
         remote_auth_token,
         environment_manager,
@@ -981,6 +991,7 @@ async fn run_ratatui_app(
     mut cloud_requirements: CloudRequirementsLoader,
     feedback: agere_feedback::AgereFeedback,
     log_db: Option<log_db::LogDbLayer>,
+    state_db: Option<StateDbHandle>,
     remote_url: Option<String>,
     remote_auth_token: Option<String>,
     environment_manager: Arc<EnvironmentManager>,
@@ -1039,6 +1050,7 @@ async fn run_ratatui_app(
             loader_overrides.clone(),
             feedback.clone(),
             log_db.clone(),
+            state_db.clone(),
             environment_manager.clone(),
         )
         .await
@@ -1359,6 +1371,7 @@ async fn run_ratatui_app(
             loader_overrides,
             feedback.clone(),
             log_db.clone(),
+            state_db.clone(),
             environment_manager.clone(),
         )
         .await
@@ -1722,6 +1735,7 @@ mod tests {
             LoaderOverrides::default(),
             agere_feedback::AgereFeedback::new(),
             /*log_db*/ None,
+            /*state_db*/ None,
             Arc::new(EnvironmentManager::default_for_tests()),
         )
         .await
@@ -2073,6 +2087,7 @@ mod tests {
             LoaderOverrides::default(),
             agere_feedback::AgereFeedback::new(),
             /*log_db*/ None,
+            /*state_db*/ None,
             Arc::new(EnvironmentManager::default_for_tests()),
             |_args| async { Err(std::io::Error::other("boom")) },
         )

@@ -29,6 +29,7 @@ pub use agere_app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 pub use agere_app_server::in_process::InProcessServerEvent;
 use agere_app_server::in_process::InProcessStartArgs;
 use agere_app_server::in_process::LogDbLayer;
+use agere_app_server::in_process::StateDbHandle;
 use agere_app_server_protocol::ClientInfo;
 use agere_app_server_protocol::ClientNotification;
 use agere_app_server_protocol::ClientRequest;
@@ -347,6 +348,8 @@ pub struct InProcessClientStartArgs {
     pub feedback: AgereFeedback,
     /// SQLite tracing layer used to flush recently emitted logs before feedback upload.
     pub log_db: Option<LogDbLayer>,
+    /// Process-wide SQLite state handle shared with embedded app-server consumers.
+    pub state_db: Option<StateDbHandle>,
     /// Environment manager used by core execution and filesystem operations.
     pub environment_manager: Arc<EnvironmentManager>,
     /// Startup warnings emitted after initialize succeeds.
@@ -407,6 +410,7 @@ impl InProcessClientStartArgs {
             thread_config_loader,
             feedback: self.feedback,
             log_db: self.log_db,
+            state_db: self.state_db,
             environment_manager: self.environment_manager,
             config_warnings: self.config_warnings,
             session_source: self.session_source,
@@ -985,6 +989,7 @@ mod tests {
             loader_overrides: LoaderOverrides::default(),
             feedback: AgereFeedback::new(),
             log_db: None,
+            state_db: None,
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
             config_warnings: Vec::new(),
             session_source,
@@ -2053,6 +2058,7 @@ mod tests {
             loader_overrides: LoaderOverrides::default(),
             feedback: AgereFeedback::new(),
             log_db: None,
+            state_db: None,
             environment_manager: environment_manager.clone(),
             config_warnings: Vec::new(),
             session_source: SessionSource::Exec,
@@ -2091,6 +2097,7 @@ mod tests {
             loader_overrides: LoaderOverrides::default(),
             feedback: AgereFeedback::new(),
             log_db: None,
+            state_db: None,
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
             config_warnings: Vec::new(),
             session_source: SessionSource::Exec,

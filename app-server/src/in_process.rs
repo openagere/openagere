@@ -84,6 +84,7 @@ use agere_exec_server::EnvironmentManager;
 use agere_feedback::AgereFeedback;
 use agere_login::AuthManager;
 use agere_protocol::protocol::SessionSource;
+pub use agere_rollout::state_db::StateDbHandle;
 pub use agere_state::log_db::LogDbLayer;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -122,6 +123,8 @@ pub struct InProcessStartArgs {
     pub feedback: AgereFeedback,
     /// SQLite tracing layer used to flush recently emitted logs before feedback upload.
     pub log_db: Option<LogDbLayer>,
+    /// Process-wide SQLite state handle shared with embedded app-server consumers.
+    pub state_db: Option<StateDbHandle>,
     /// Environment manager used by core execution and filesystem operations.
     pub environment_manager: Arc<EnvironmentManager>,
     /// Startup warnings emitted after initialize succeeds.
@@ -407,6 +410,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
                 environment_manager: args.environment_manager,
                 feedback: args.feedback,
                 log_db: args.log_db,
+                state_db: args.state_db,
                 config_warnings: args.config_warnings,
                 session_source: args.session_source,
                 auth_manager,
@@ -720,6 +724,11 @@ mod tests {
     use agere_app_server_protocol::RemoteControlClientConnectionAudience;
     use agere_app_server_protocol::RemoteControlClientEnrollmentAudience;
     use agere_app_server_protocol::SessionSource as ApiSessionSource;
+    use agere_app_server_protocol::ThreadGoalGetParams;
+    use agere_app_server_protocol::ThreadGoalGetResponse;
+    use agere_app_server_protocol::ThreadGoalSetParams;
+    use agere_app_server_protocol::ThreadGoalSetResponse;
+    use agere_app_server_protocol::ThreadGoalStatus;
     use agere_app_server_protocol::ThreadStartParams;
     use agere_app_server_protocol::ThreadStartResponse;
     use agere_app_server_protocol::Turn;
@@ -749,6 +758,7 @@ mod tests {
             thread_config_loader: Arc::new(agere_config::NoopThreadConfigLoader),
             feedback: AgereFeedback::new(),
             log_db: None,
+            state_db: None,
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
             config_warnings: Vec::new(),
             session_source,
@@ -898,6 +908,104 @@ mod tests {
                 .await
                 .expect("in-process runtime should shutdown cleanly");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn in_process_start_shares_process_state_db_with_threads() {
+        let mut config = build_test_config().await;
+        let agere_home = tempfile::tempdir().expect("tempdir");
+        config.agere_home =
+            agere_utils_fs::AbsolutePathBuf::try_from(agere_home.path().to_path_buf())
+                .expect("tempdir path should be absolute");
+        config.sqlite_home = config.agere_home.to_path_buf();
+        let state_db = agere_rollout::state_db::init(&config)
+            .await
+            .expect("test state db should initialize");
+        let args = InProcessStartArgs {
+            arg0_paths: Arg0DispatchPaths::default(),
+            config: Arc::new(config),
+            cli_overrides: Vec::new(),
+            loader_overrides: LoaderOverrides::default(),
+            thread_config_loader: Arc::new(agere_config::NoopThreadConfigLoader),
+            feedback: AgereFeedback::new(),
+            log_db: None,
+            state_db: Some(state_db.clone()),
+            environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+            config_warnings: Vec::new(),
+            session_source: SessionSource::Cli,
+            enable_agere_api_key_env: false,
+            initialize: InitializeParams {
+                client_info: ClientInfo {
+                    name: "agere-in-process-test".to_string(),
+                    title: None,
+                    version: "0.0.1".to_string(),
+                },
+                capabilities: None,
+            },
+            channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        };
+        let client = start(args).await.expect("in-process runtime should start");
+
+        let response = client
+            .request(ClientRequest::ThreadStart {
+                request_id: RequestId::Integer(22),
+                params: ThreadStartParams {
+                    ephemeral: Some(false),
+                    ..ThreadStartParams::default()
+                },
+            })
+            .await
+            .expect("request transport should work")
+            .expect("thread/start should succeed");
+        let parsed: ThreadStartResponse =
+            serde_json::from_value(response).expect("thread/start response should parse");
+        let thread_id =
+            agere_protocol::ThreadId::from_string(parsed.thread.id.as_str()).expect("thread id");
+
+        let set_response = client
+            .request(ClientRequest::ThreadGoalSet {
+                request_id: RequestId::Integer(23),
+                params: ThreadGoalSetParams {
+                    thread_id: parsed.thread.id.clone(),
+                    objective: Some("shared process goal".to_string()),
+                    status: Some(ThreadGoalStatus::Active),
+                    replace_existing: false,
+                    token_budget: Some(Some(12_345)),
+                },
+            })
+            .await
+            .expect("request transport should work")
+            .expect("thread/goal/set should succeed");
+        let parsed_set: ThreadGoalSetResponse =
+            serde_json::from_value(set_response).expect("thread/goal/set response should parse");
+        assert_eq!(parsed_set.goal.objective, "shared process goal");
+        assert_eq!(parsed_set.goal.token_budget, Some(12_345));
+
+        let goal_response = client
+            .request(ClientRequest::ThreadGoalGet {
+                request_id: RequestId::Integer(24),
+                params: ThreadGoalGetParams {
+                    thread_id: parsed.thread.id,
+                },
+            })
+            .await
+            .expect("request transport should work")
+            .expect("thread/goal/get should succeed");
+        let parsed_goal: ThreadGoalGetResponse =
+            serde_json::from_value(goal_response).expect("thread/goal/get response should parse");
+        assert_eq!(parsed_goal.goal, Some(parsed_set.goal),);
+        let persisted_goal = state_db
+            .get_thread_goal(thread_id)
+            .await
+            .expect("read persisted goal")
+            .expect("goal should be persisted in injected state db");
+        assert_eq!(persisted_goal.objective, "shared process goal");
+        assert_eq!(persisted_goal.token_budget, Some(12_345));
+
+        client
+            .shutdown()
+            .await
+            .expect("in-process runtime should shutdown cleanly");
     }
 
     #[tokio::test]

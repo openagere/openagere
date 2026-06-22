@@ -41,6 +41,7 @@ use agere_core_plugins::marketplace_upgrade::ConfiguredMarketplaceUpgradeOutcome
 use agere_core_plugins::marketplace_upgrade::configured_git_marketplace_names;
 use agere_core_plugins::marketplace_upgrade::upgrade_configured_git_marketplaces;
 use agere_core_plugins::remote::RemotePluginServiceConfig;
+use agere_core_plugins::remote::remote_plugin_backend_supported;
 use agere_core_plugins::remote_legacy::RemotePluginFetchError;
 use agere_core_plugins::remote_legacy::RemotePluginMutationError;
 use agere_core_plugins::startup_sync::curated_plugins_repo_path;
@@ -515,7 +516,7 @@ impl PluginsManager {
         config: &Config,
         auth: Option<&AgereAuth>,
     ) -> Result<Vec<String>, RemotePluginFetchError> {
-        if !config.features.enabled(Feature::Plugins) {
+        if !config.features.enabled(Feature::Plugins) || !remote_plugin_backend_supported() {
             return Ok(Vec::new());
         }
 
@@ -1233,27 +1234,29 @@ impl PluginsManager {
                     warn!("failed to start configured marketplace auto-upgrade task: {err}");
                 }
             }
-            start_startup_remote_plugin_sync_once(
-                Arc::clone(self),
-                self.agere_home.clone(),
-                config.clone(),
-                auth_manager.clone(),
-            );
+            if remote_plugin_backend_supported() {
+                start_startup_remote_plugin_sync_once(
+                    Arc::clone(self),
+                    self.agere_home.clone(),
+                    config.clone(),
+                    auth_manager.clone(),
+                );
 
-            let config = config.clone();
-            let manager = Arc::clone(self);
-            tokio::spawn(async move {
-                let auth = auth_manager.auth().await;
-                if let Err(err) = manager
-                    .featured_plugin_ids_for_config(&config, auth.as_ref())
-                    .await
-                {
-                    warn!(
-                        error = %err,
-                        "failed to warm featured plugin ids cache"
-                    );
-                }
-            });
+                let config = config.clone();
+                let manager = Arc::clone(self);
+                tokio::spawn(async move {
+                    let auth = auth_manager.auth().await;
+                    if let Err(err) = manager
+                        .featured_plugin_ids_for_config(&config, auth.as_ref())
+                        .await
+                    {
+                        warn!(
+                            error = %err,
+                            "failed to warm featured plugin ids cache"
+                        );
+                    }
+                });
+            }
         }
     }
 

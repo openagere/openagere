@@ -97,7 +97,9 @@ impl AgereMessageProcessor {
             }
         };
 
-        if config.features.enabled(Feature::RemotePlugin) {
+        if config.features.enabled(Feature::RemotePlugin)
+            && agere_core_plugins::remote::remote_plugin_backend_supported()
+        {
             let remote_plugin_service_config = RemotePluginServiceConfig {
                 chatgpt_base_url: config.chatgpt_base_url.clone(),
             };
@@ -124,7 +126,8 @@ impl AgereMessageProcessor {
                 }
                 Err(
                     RemotePluginCatalogError::AuthRequired
-                    | RemotePluginCatalogError::UnsupportedAuthMode,
+                    | RemotePluginCatalogError::UnsupportedAuthMode
+                    | RemotePluginCatalogError::Unsupported(_),
                 ) => {}
                 Err(err) => {
                     warn!(

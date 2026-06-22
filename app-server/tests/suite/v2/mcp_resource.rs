@@ -205,6 +205,7 @@ async fn mcp_resource_read_returns_error_for_unknown_thread() -> Result<()> {
         thread_config_loader: Arc::new(agere_config::NoopThreadConfigLoader),
         feedback: AgereFeedback::new(),
         log_db: None,
+        state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         config_warnings: Vec::new(),
         session_source: SessionSource::Cli,

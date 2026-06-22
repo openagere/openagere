@@ -77,6 +77,7 @@ async fn thread_start_with_non_local_thread_store_does_not_create_local_persiste
         thread_config_loader: Arc::new(NoopThreadConfigLoader),
         feedback: AgereFeedback::new(),
         log_db: None,
+        state_db: None,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         config_warnings: Vec::new(),
         session_source: SessionSource::Cli,

@@ -52,6 +52,7 @@ use agere_config::CloudRequirementsLoader;
 use agere_config::ConfigLoadError;
 use agere_config::LoaderOverrides;
 use agere_config::format_config_error_with_source;
+use agere_core::StateDbHandle;
 use agere_core::check_execpolicy_for_warnings;
 use agere_core::config::Config;
 use agere_core::config::ConfigBuilder;
@@ -186,6 +187,7 @@ impl RequestIdSequencer {
 
 struct ExecRunArgs {
     in_process_start_args: InProcessClientStartArgs,
+    state_db: Option<StateDbHandle>,
     command: Option<ExecCommand>,
     config: Config,
     exec_span: tracing::Span,
@@ -334,11 +336,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
 
     let model_provider: Option<String> = None;
 
-    let model = if let Some(model) = model_cli_arg {
-        Some(model)
-    } else {
-        None // No model specified, will use the default.
-    };
+    let model = model_cli_arg;
 
     // Load configuration and determine approval policy
     let overrides = ConfigOverrides {
@@ -450,6 +448,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         arg0_paths.agere_self_exe.clone(),
         arg0_paths.agere_linux_exe.clone(),
     )?;
+    let state_db = agere_core::init_state_db(&config).await;
     let in_process_start_args = InProcessClientStartArgs {
         arg0_paths,
         config: std::sync::Arc::new(config.clone()),
@@ -457,6 +456,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         loader_overrides: run_loader_overrides,
         feedback: AgereFeedback::new(),
         log_db: None,
+        state_db: state_db.clone(),
         environment_manager: std::sync::Arc::new(EnvironmentManager::new(
             EnvironmentManagerArgs::from_env(local_runtime_paths),
         )),
@@ -471,6 +471,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     };
     run_exec_session(ExecRunArgs {
         in_process_start_args,
+        state_db,
         command,
         config,
         exec_span: exec_span.clone(),
@@ -490,6 +491,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
 async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     let ExecRunArgs {
         in_process_start_args,
+        state_db,
         command,
         config,
         exec_span,
@@ -592,7 +594,9 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     // APIs so exec no longer reaches into rollout storage directly.
     let (primary_thread_id, fallback_session_configured) =
         if let Some(ExecCommand::Resume(args)) = command.as_ref() {
-            if let Some(thread_id) = resolve_resume_thread_id(&client, &config, args).await? {
+            if let Some(thread_id) =
+                resolve_resume_thread_id(&client, &config, state_db.as_ref(), args).await?
+            {
                 let response: ThreadResumeResponse = send_request_with_response(
                     &client,
                     ClientRequest::ThreadResume {
@@ -1160,6 +1164,7 @@ fn cwds_match(current_cwd: &Path, session_cwd: &Path) -> bool {
 async fn resolve_resume_thread_id(
     client: &InProcessAppServerClient,
     config: &Config,
+    state_db: Option<&StateDbHandle>,
     args: &crate::cli::ResumeArgs,
 ) -> anyhow::Result<Option<String>> {
     let model_providers = resume_lookup_model_providers(config, args);
@@ -1207,7 +1212,7 @@ async fn resolve_resume_thread_id(
     if Uuid::parse_str(session_id).is_ok() {
         return Ok(Some(session_id.to_string()));
     }
-    if let Some(state_db) = agere_core::get_state_db(config).await {
+    if let Some(state_db) = state_db {
         let cwd = (!args.all).then_some(config.cwd.as_path());
         let resolved = state_db
             .find_thread_by_exact_title(

@@ -43,6 +43,7 @@ use crate::UpdateThreadMetadataParams;
 pub struct LocalThreadStore {
     pub(super) config: RolloutConfig,
     live_recorders: Arc<Mutex<HashMap<ThreadId, RolloutRecorder>>>,
+    injected_state_db: Option<StateDbHandle>,
     state_db: Arc<OnceCell<StateDbHandle>>,
 }
 
@@ -57,15 +58,24 @@ impl std::fmt::Debug for LocalThreadStore {
 impl LocalThreadStore {
     /// Create a local store from the rollout configuration used by existing local persistence.
     pub fn new(config: RolloutConfig) -> Self {
+        Self::new_with_state_db(config, None)
+    }
+
+    /// Create a local store using an already initialized process state DB handle.
+    pub fn new_with_state_db(config: RolloutConfig, state_db: Option<StateDbHandle>) -> Self {
         Self {
             config,
             live_recorders: Arc::new(Mutex::new(HashMap::new())),
+            injected_state_db: state_db,
             state_db: Arc::new(OnceCell::new()),
         }
     }
 
     /// Return the state DB handle used by local rollout writers.
     pub async fn state_db(&self) -> Option<StateDbHandle> {
+        if let Some(state_db) = self.injected_state_db.clone() {
+            return Some(state_db);
+        }
         self.state_db
             .get_or_try_init(|| async {
                 agere_rollout::state_db::init(&self.config).await.ok_or(())

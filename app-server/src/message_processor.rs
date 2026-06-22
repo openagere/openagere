@@ -78,6 +78,7 @@ use agere_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use agere_protocol::ThreadId;
 use agere_protocol::protocol::SessionSource;
 use agere_protocol::protocol::W3cTraceContext;
+use agere_rollout::state_db::StateDbHandle;
 use agere_state::log_db::LogDbLayer;
 use async_trait::async_trait;
 use axum::http::HeaderValue;
@@ -251,6 +252,7 @@ pub(crate) struct MessageProcessorArgs {
     pub(crate) environment_manager: Arc<EnvironmentManager>,
     pub(crate) feedback: AgereFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
+    pub(crate) state_db: Option<StateDbHandle>,
     pub(crate) config_warnings: Vec<ConfigWarningNotification>,
     pub(crate) session_source: SessionSource,
     pub(crate) auth_manager: Arc<AuthManager>,
@@ -271,6 +273,7 @@ impl MessageProcessor {
             environment_manager,
             feedback,
             log_db,
+            state_db,
             config_warnings,
             session_source,
             auth_manager,
@@ -286,7 +289,7 @@ impl MessageProcessor {
             config.chatgpt_base_url.trim_end_matches('/').to_string(),
             config.analytics_enabled,
         );
-        let thread_manager = Arc::new(ThreadManager::new(
+        let thread_manager = Arc::new(ThreadManager::new_with_state_db(
             config.as_ref(),
             auth_manager.clone(),
             session_source,
@@ -297,6 +300,7 @@ impl MessageProcessor {
             },
             environment_manager,
             Some(analytics_events_client.clone()),
+            state_db.clone(),
         ));
         thread_manager
             .plugins_manager()
@@ -312,6 +316,7 @@ impl MessageProcessor {
             config_manager: config_manager.clone(),
             feedback,
             log_db,
+            state_db,
         });
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
             // Keep plugin startup warmups aligned at app-server startup.
