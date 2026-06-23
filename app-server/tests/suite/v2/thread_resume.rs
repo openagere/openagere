@@ -700,6 +700,60 @@ async fn thread_goal_set_edits_objective_without_resetting_usage() -> Result<()>
 }
 
 #[tokio::test]
+async fn thread_goal_get_reconciles_missing_thread_metadata() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let agere_home = TempDir::new()?;
+    create_config_toml(agere_home.path(), &server.uri())?;
+    let config_path = agere_home.path().join("config.toml");
+    let config = std::fs::read_to_string(&config_path)?;
+    std::fs::write(
+        &config_path,
+        config.replace("personality = true\n", "personality = true\ngoals = true\n"),
+    )?;
+    let thread_id = create_fake_rollout_with_text_elements(
+        agere_home.path(),
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "Saved user message",
+        Vec::new(),
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let thread_id = ThreadId::from_string(&thread_id)?;
+    let state_db =
+        StateRuntime::init(agere_home.path().to_path_buf(), "mock_provider".into()).await?;
+    state_db
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await?;
+    assert_eq!(state_db.get_thread(thread_id).await?, None);
+
+    let mut mcp = McpProcess::new_without_managed_config(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let get_id = mcp
+        .send_raw_request(
+            "thread/goal/get",
+            Some(json!({
+                "threadId": thread_id.to_string(),
+            })),
+        )
+        .await?;
+    let get_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(get_id)),
+    )
+    .await??;
+    let get: agere_app_server_protocol::ThreadGoalGetResponse = to_response(get_resp)?;
+
+    assert_eq!(None, get.goal);
+    assert!(
+        state_db.get_thread(thread_id).await?.is_some(),
+        "goal/get should reconcile rollout metadata before reading goals"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_goal_set_replace_existing_starts_fresh_goal() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let agere_home = TempDir::new()?;

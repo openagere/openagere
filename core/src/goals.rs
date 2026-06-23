@@ -1531,11 +1531,10 @@ impl Session {
             .as_any()
             .downcast_ref::<LocalThreadStore>()
         {
-            local_store.state_db().await.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "thread goals require a local persisted thread with a state database"
-                )
-            })?
+            local_store
+                .require_state_db()
+                .await
+                .context("thread goals require a local persisted thread with a state database")?
         } else {
             anyhow::bail!("thread goals require a local persisted thread with a state database");
         };
@@ -1569,7 +1568,10 @@ impl Session {
                 .context("failed to read thread metadata after reconciling thread goals")?
                 .is_some();
             if !thread_metadata_present {
-                anyhow::bail!("thread metadata is unavailable after reconciling thread goals");
+                tracing::warn!(
+                    "thread metadata is unavailable after reconciling thread goals for {}; continuing with goal state only",
+                    self.conversation_id
+                );
             }
         }
 

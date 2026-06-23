@@ -3,6 +3,7 @@ name = "agere-state"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [dependencies]
 anyhow = { workspace = true }

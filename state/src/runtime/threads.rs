@@ -940,11 +940,20 @@ ON CONFLICT(thread_id, position) DO NOTHING
 
     /// Delete a thread metadata row by id.
     pub async fn delete_thread(&self, thread_id: ThreadId) -> anyhow::Result<u64> {
+        let mut tx = self.pool.begin().await?;
         let result = sqlx::query("DELETE FROM threads WHERE id = ?")
             .bind(thread_id.to_string())
-            .execute(self.pool.as_ref())
+            .execute(&mut *tx)
             .await?;
-        Ok(result.rows_affected())
+        let rows_affected = result.rows_affected();
+        if rows_affected > 0 {
+            sqlx::query("DELETE FROM thread_goals WHERE thread_id = ?")
+                .bind(thread_id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(rows_affected)
     }
 }
 

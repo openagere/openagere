@@ -583,6 +583,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replace_thread_goal_does_not_require_thread_metadata() {
+        let runtime = test_runtime().await;
+        let thread_id = test_thread_id();
+
+        let goal = runtime
+            .replace_thread_goal(
+                thread_id,
+                "keep working even if rollout metadata needs reconciliation",
+                crate::ThreadGoalStatus::Active,
+                /*token_budget*/ None,
+            )
+            .await
+            .expect("goal replacement should not require a threads row");
+
+        assert_eq!(
+            Some(goal),
+            runtime.get_thread_goal(thread_id).await.unwrap()
+        );
+    }
+
+    #[tokio::test]
     async fn replace_thread_goal_applies_budget_limit_immediately() {
         let runtime = test_runtime().await;
         let thread_id = test_thread_id();
@@ -1528,6 +1549,35 @@ mod tests {
 
         assert_eq!(
             None,
+            runtime
+                .get_thread_goal(thread_id)
+                .await
+                .expect("goal read should succeed")
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_missing_thread_preserves_orphan_goal() {
+        let runtime = test_runtime().await;
+        let thread_id = test_thread_id();
+        let goal = runtime
+            .replace_thread_goal(
+                thread_id,
+                "preserve goal while thread metadata is missing",
+                crate::ThreadGoalStatus::Active,
+                /*token_budget*/ None,
+            )
+            .await
+            .expect("goal replacement should succeed");
+
+        let deleted = runtime
+            .delete_thread(thread_id)
+            .await
+            .expect("thread deletion should succeed");
+
+        assert_eq!(0, deleted);
+        assert_eq!(
+            Some(goal),
             runtime
                 .get_thread_goal(thread_id)
                 .await

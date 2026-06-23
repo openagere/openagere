@@ -73,15 +73,33 @@ impl LocalThreadStore {
 
     /// Return the state DB handle used by local rollout writers.
     pub async fn state_db(&self) -> Option<StateDbHandle> {
+        match self.require_state_db().await {
+            Ok(state_db) => Some(state_db),
+            Err(err) => {
+                tracing::warn!("failed to initialize local thread store state DB: {err:#}");
+                None
+            }
+        }
+    }
+
+    /// Return the state DB handle used by local rollout writers, preserving
+    /// initialization failures for callers that cannot safely degrade.
+    pub async fn require_state_db(&self) -> anyhow::Result<StateDbHandle> {
         if let Some(state_db) = self.injected_state_db.clone() {
-            return Some(state_db);
+            return Ok(state_db);
         }
         self.state_db
             .get_or_try_init(|| async {
-                agere_rollout::state_db::init(&self.config).await.ok_or(())
+                agere_rollout::state_db::init(&self.config)
+                    .await
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "failed to initialize state DB at {}",
+                            self.config.sqlite_home.display()
+                        )
+                    })
             })
             .await
-            .ok()
             .cloned()
     }
 

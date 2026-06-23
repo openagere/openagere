@@ -298,7 +298,12 @@ fn thread_goal_error_message(action: &str, err: &color_eyre::Report) -> String {
     if is_ephemeral_thread_goal_error(err) {
         EPHEMERAL_THREAD_GOAL_ERROR_MESSAGE.to_string()
     } else {
-        format!("Failed to {action} thread goal: {err}")
+        let detail = err
+            .chain()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(": ");
+        format!("Failed to {action} thread goal: {detail}")
     }
 }
 
@@ -403,7 +408,7 @@ mod tests {
 
         assert_eq!(
             thread_goal_error_message("read", &err),
-            "Failed to read thread goal: thread/goal/get failed in TUI"
+            "Failed to read thread goal: thread/goal/get failed in TUI: server disappeared"
         );
     }
 

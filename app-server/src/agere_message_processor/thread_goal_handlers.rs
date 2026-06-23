@@ -27,53 +27,14 @@ impl AgereMessageProcessor {
                 return;
             }
         };
+        if let Err(error) = self
+            .reconcile_thread_goal_rollout(thread_id, &state_db)
+            .await
+        {
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
         let running_thread = self.thread_manager.get_thread(thread_id).await.ok();
-        let rollout_path = match running_thread.as_ref() {
-            Some(thread) => match thread.rollout_path() {
-                Some(path) => path,
-                None => {
-                    self.send_invalid_request_error(
-                        request_id,
-                        format!("ephemeral thread does not support goals: {thread_id}"),
-                    )
-                    .await;
-                    return;
-                }
-            },
-            None => {
-                match find_thread_path_by_id_str(&self.config.agere_home, &thread_id.to_string())
-                    .await
-                {
-                    Ok(Some(path)) => path,
-                    Ok(None) => {
-                        self.send_invalid_request_error(
-                            request_id,
-                            format!("thread not found: {thread_id}"),
-                        )
-                        .await;
-                        return;
-                    }
-                    Err(err) => {
-                        self.send_internal_error(
-                            request_id,
-                            format!("failed to locate thread id {thread_id}: {err}"),
-                        )
-                        .await;
-                        return;
-                    }
-                }
-            }
-        };
-        reconcile_rollout(
-            Some(&state_db),
-            rollout_path.as_path(),
-            self.config.model_provider_id.as_str(),
-            /*builder*/ None,
-            &[],
-            /*archived_only*/ None,
-            /*new_thread_memory_mode*/ None,
-        )
-        .await;
 
         let listener_command_tx = {
             let thread_state = self.thread_state_manager.thread_state(thread_id).await;
@@ -245,6 +206,13 @@ impl AgereMessageProcessor {
                 return;
             }
         };
+        if let Err(error) = self
+            .reconcile_thread_goal_rollout(thread_id, &state_db)
+            .await
+        {
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
         let goal = match state_db.get_thread_goal(thread_id).await {
             Ok(goal) => goal.map(api_thread_goal_from_state),
             Err(err) => {
@@ -284,52 +252,13 @@ impl AgereMessageProcessor {
             }
         };
         let running_thread = self.thread_manager.get_thread(thread_id).await.ok();
-        let rollout_path = match running_thread.as_ref() {
-            Some(thread) => match thread.rollout_path() {
-                Some(path) => path,
-                None => {
-                    self.send_invalid_request_error(
-                        request_id,
-                        format!("ephemeral thread does not support goals: {thread_id}"),
-                    )
-                    .await;
-                    return;
-                }
-            },
-            None => {
-                match find_thread_path_by_id_str(&self.config.agere_home, &thread_id.to_string())
-                    .await
-                {
-                    Ok(Some(path)) => path,
-                    Ok(None) => {
-                        self.send_invalid_request_error(
-                            request_id,
-                            format!("thread not found: {thread_id}"),
-                        )
-                        .await;
-                        return;
-                    }
-                    Err(err) => {
-                        self.send_internal_error(
-                            request_id,
-                            format!("failed to locate thread id {thread_id}: {err}"),
-                        )
-                        .await;
-                        return;
-                    }
-                }
-            }
-        };
-        reconcile_rollout(
-            Some(&state_db),
-            rollout_path.as_path(),
-            self.config.model_provider_id.as_str(),
-            /*builder*/ None,
-            &[],
-            /*archived_only*/ None,
-            /*new_thread_memory_mode*/ None,
-        )
-        .await;
+        if let Err(error) = self
+            .reconcile_thread_goal_rollout(thread_id, &state_db)
+            .await
+        {
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
 
         let external_goal_mutation_guard = if let Some(thread) = running_thread.as_ref() {
             thread.prepare_external_goal_mutation().await
@@ -401,6 +330,50 @@ impl AgereMessageProcessor {
         open_state_db_for_direct_thread_lookup(&self.config)
             .await
             .ok_or_else(|| internal_error("sqlite state db unavailable for thread goals"))
+    }
+
+    async fn reconcile_thread_goal_rollout(
+        &self,
+        thread_id: ThreadId,
+        state_db: &StateDbHandle,
+    ) -> Result<(), JSONRPCErrorError> {
+        let running_thread = self.thread_manager.get_thread(thread_id).await.ok();
+        let rollout_path = match running_thread.as_ref() {
+            Some(thread) => match thread.rollout_path() {
+                Some(path) => path,
+                None => {
+                    return Err(invalid_request(format!(
+                        "ephemeral thread does not support goals: {thread_id}"
+                    )));
+                }
+            },
+            None => {
+                match find_thread_path_by_id_str(&self.config.agere_home, &thread_id.to_string())
+                    .await
+                {
+                    Ok(Some(path)) => path,
+                    Ok(None) => {
+                        return Err(invalid_request(format!("thread not found: {thread_id}")));
+                    }
+                    Err(err) => {
+                        return Err(internal_error(format!(
+                            "failed to locate thread id {thread_id}: {err}"
+                        )));
+                    }
+                }
+            }
+        };
+        reconcile_rollout(
+            Some(state_db),
+            rollout_path.as_path(),
+            self.config.model_provider_id.as_str(),
+            /*builder*/ None,
+            &[],
+            /*archived_only*/ None,
+            /*new_thread_memory_mode*/ None,
+        )
+        .await;
+        Ok(())
     }
 
     pub(super) async fn emit_thread_goal_snapshot(&self, thread_id: ThreadId) {

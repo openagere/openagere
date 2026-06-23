@@ -16,6 +16,7 @@ path = "examples/generate-proto.rs"
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 agere-git-utils = { workspace = true }
