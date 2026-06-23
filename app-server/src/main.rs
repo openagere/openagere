@@ -18,6 +18,9 @@ const DISABLE_MANAGED_CONFIG_ENV_VAR: &str = "AGERE_APP_SERVER_DISABLE_MANAGED_C
 
 #[derive(Debug, Parser)]
 struct AppServerArgs {
+    #[command(flatten)]
+    config_overrides: CliConfigOverrides,
+
     /// Transport endpoint URL. Supported values: `stdio://` (default),
     /// `unix://`, `unix://PATH`, `ws://IP:PORT`, `off`.
     #[arg(
@@ -39,6 +42,10 @@ struct AppServerArgs {
     #[command(flatten)]
     auth: AppServerWebsocketAuthArgs,
 
+    /// Fail if config.toml contains unknown configuration fields.
+    #[arg(long = "strict-config", default_value_t = false)]
+    strict_config: bool,
+
     /// Hidden debug-only test hook used by integration tests that spawn the
     /// production app-server binary.
     #[cfg(debug_assertions)]
@@ -49,6 +56,8 @@ struct AppServerArgs {
 fn main() -> anyhow::Result<()> {
     arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
         let args = AppServerArgs::parse();
+        let config_overrides = args.config_overrides;
+        let strict_config = args.strict_config;
         let loader_overrides = if disable_managed_config_from_debug_env() {
             LoaderOverrides::without_managed_config_for_tests()
         } else {
@@ -67,8 +76,9 @@ fn main() -> anyhow::Result<()> {
 
         run_main_with_transport_options(
             arg0_paths,
-            CliConfigOverrides::default(),
+            config_overrides,
             loader_overrides,
+            strict_config,
             /*default_analytics_enabled*/ false,
             transport,
             session_source,

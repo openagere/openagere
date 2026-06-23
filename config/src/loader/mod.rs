@@ -22,6 +22,9 @@ use crate::project_root_markers::project_root_markers_from_config;
 use crate::state::ConfigLayerEntry;
 use crate::state::ConfigLayerStack;
 use crate::state::LoaderOverrides;
+use crate::strict_config::config_error_from_ignored_toml_fields;
+use crate::strict_config::ignored_toml_value_field;
+use crate::strict_config::unknown_feature_toml_value_field;
 use crate::thread_config::ThreadConfigContext;
 use crate::thread_config::ThreadConfigLoader;
 use agere_app_server_protocol::ConfigLayerSource;
@@ -37,7 +40,6 @@ use dunce::canonicalize as normalize_path;
 use serde::Deserialize;
 use std::io;
 use std::path::Path;
-#[cfg(windows)]
 use std::path::PathBuf;
 use toml::Value as TomlValue;
 
@@ -49,6 +51,71 @@ const DEFAULT_PROGRAM_DATA_DIR_WINDOWS: &str = r"C:\ProgramData";
 
 async fn first_layer_config_error_from_entries(layers: &[ConfigLayerEntry]) -> Option<ConfigError> {
     typed_first_layer_config_error_from_entries::<ConfigToml>(layers, CONFIG_TOML_FILE).await
+}
+
+async fn first_layer_strict_config_error_from_entries(
+    fs: &dyn ExecutorFileSystem,
+    layers: &[ConfigLayerEntry],
+) -> Option<ConfigError> {
+    for layer in layers {
+        if layer.is_disabled() {
+            continue;
+        }
+
+        if ignored_user_config_layer(layer) {
+            continue;
+        }
+
+        let Some(path) = config_path_for_strict_layer(layer) else {
+            continue;
+        };
+        let contents = match fs.read_file_text(&path).await {
+            Ok(contents) => contents,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                tracing::debug!(
+                    "Failed to read config file {}: {err}",
+                    path.as_path().display()
+                );
+                continue;
+            }
+        };
+
+        let Some(parent) = path.parent() else {
+            tracing::debug!(
+                "Config file {} has no parent directory",
+                path.as_path().display()
+            );
+            continue;
+        };
+        let _guard = AbsolutePathBufGuard::new(parent.as_path());
+        if let Some(error) =
+            config_error_from_ignored_toml_fields::<ConfigToml>(path.as_path(), &contents)
+        {
+            return Some(error);
+        }
+    }
+
+    None
+}
+
+fn ignored_user_config_layer(layer: &ConfigLayerEntry) -> bool {
+    matches!(layer.name, ConfigLayerSource::User { .. })
+        && matches!(&layer.config, TomlValue::Table(table) if table.is_empty())
+}
+
+fn config_path_for_strict_layer(layer: &ConfigLayerEntry) -> Option<AbsolutePathBuf> {
+    match &layer.name {
+        ConfigLayerSource::System { file } => Some(file.clone()),
+        ConfigLayerSource::User { file } => Some(file.clone()),
+        ConfigLayerSource::Project { dot_agere_folder } => {
+            Some(dot_agere_folder.join(CONFIG_TOML_FILE))
+        }
+        ConfigLayerSource::LegacyManagedConfigTomlFromFile { file } => Some(file.clone()),
+        ConfigLayerSource::Mdm { .. }
+        | ConfigLayerSource::SessionFlags
+        | ConfigLayerSource::LegacyManagedConfigTomlFromMdm => None,
+    }
 }
 
 /// To build up the set of admin-enforced constraints, we build up from multiple
@@ -89,6 +156,7 @@ pub async fn load_config_layers_state(
     cwd: Option<AbsolutePathBuf>,
     cli_overrides: &[(String, TomlValue)],
     overrides: LoaderOverrides,
+    strict_config: bool,
     cloud_requirements: CloudRequirementsLoader,
     thread_config_loader: &dyn ThreadConfigLoader,
 ) -> io::Result<ConfigLayerStack> {
@@ -147,6 +215,9 @@ pub async fn load_config_layers_state(
             .as_ref()
             .map(AbsolutePathBuf::as_path)
             .unwrap_or(agere_home);
+        if strict_config {
+            validate_cli_overrides_strictly(&cli_overrides_layer, base_dir)?;
+        }
         Some(resolve_relative_paths_in_config_toml(
             cli_overrides_layer,
             base_dir,
@@ -304,6 +375,16 @@ pub async fn load_config_layers_state(
         ));
     }
 
+    if strict_config
+        && let Some(config_error) = first_layer_strict_config_error_from_entries(fs, &layers).await
+    {
+        return Err(io_error_from_config_error(
+            io::ErrorKind::InvalidData,
+            config_error,
+            /*source*/ None,
+        ));
+    }
+
     Ok(ConfigLayerStack::new(
         layers,
         config_requirements_toml.clone().try_into()?,
@@ -320,6 +401,29 @@ fn insert_layer_by_precedence(layers: &mut Vec<ConfigLayerEntry>, layer: ConfigL
         Some(index) => layers.insert(index, layer),
         None => layers.push(layer),
     }
+}
+
+fn validate_cli_overrides_strictly(
+    cli_overrides_layer: &TomlValue,
+    base_dir: &Path,
+) -> io::Result<()> {
+    let _guard = AbsolutePathBufGuard::new(base_dir);
+    if let Some(ignored_path) = ignored_toml_value_field::<ConfigToml>(cli_overrides_layer.clone())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown configuration field `{ignored_path}` in -c/--config override"),
+        ));
+    }
+
+    if let Some(ignored_path) = unknown_feature_toml_value_field(cli_overrides_layer) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown configuration field `{ignored_path}` in -c/--config override"),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Attempts to load a config.toml file from `config_toml`.

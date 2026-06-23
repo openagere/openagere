@@ -821,6 +821,7 @@ mod tests {
                 agere_home.path().to_path_buf(),
                 Vec::new(),
                 LoaderOverrides::default(),
+                /*strict_config*/ false,
                 Arg0DispatchPaths::default(),
                 Arc::new(agere_config::NoopThreadConfigLoader),
             ),

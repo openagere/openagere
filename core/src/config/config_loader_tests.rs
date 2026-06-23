@@ -24,18 +24,97 @@ use agere_config::config_toml::ProjectConfig;
 use agere_config::loader::load_config_layers_state;
 use agere_config::loader::load_requirements_toml;
 use agere_config::version_for_toml;
+use agere_exec_server::CopyOptions;
+use agere_exec_server::CreateDirectoryOptions;
+use agere_exec_server::ExecutorFileSystem;
+use agere_exec_server::FileMetadata;
+use agere_exec_server::FileSystemResult;
 use agere_exec_server::LOCAL_FS;
+use agere_exec_server::ReadDirectoryEntry;
+use agere_exec_server::RemoveOptions;
 use agere_protocol::config_types::TrustLevel;
 use agere_protocol::config_types::WebSearchMode;
 use agere_protocol::models::PermissionProfile;
 use agere_protocol::protocol::AskForApproval;
 use agere_utils_fs::AbsolutePathBuf;
+use async_trait::async_trait;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::io;
 use std::path::Path;
 use tempfile::tempdir;
 use toml::Value as TomlValue;
+
+struct ConfigOverrideFileSystem {
+    config_path: AbsolutePathBuf,
+    config_contents: String,
+}
+
+#[async_trait]
+impl ExecutorFileSystem for ConfigOverrideFileSystem {
+    async fn read_file(&self, path: &AbsolutePathBuf) -> FileSystemResult<Vec<u8>> {
+        if path == &self.config_path {
+            return Ok(self.config_contents.as_bytes().to_vec());
+        }
+
+        LOCAL_FS.read_file(path).await
+    }
+
+    async fn write_file(&self, path: &AbsolutePathBuf, contents: Vec<u8>) -> FileSystemResult<()> {
+        LOCAL_FS.write_file(path, contents).await
+    }
+
+    async fn create_directory(
+        &self,
+        path: &AbsolutePathBuf,
+        create_directory_options: CreateDirectoryOptions,
+    ) -> FileSystemResult<()> {
+        LOCAL_FS
+            .create_directory(path, create_directory_options)
+            .await
+    }
+
+    async fn get_metadata(&self, path: &AbsolutePathBuf) -> FileSystemResult<FileMetadata> {
+        if path == &self.config_path {
+            return Ok(FileMetadata {
+                is_directory: false,
+                is_file: true,
+                is_symlink: false,
+                created_at_ms: 0,
+                modified_at_ms: 0,
+            });
+        }
+
+        LOCAL_FS.get_metadata(path).await
+    }
+
+    async fn read_directory(
+        &self,
+        path: &AbsolutePathBuf,
+    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
+        LOCAL_FS.read_directory(path).await
+    }
+
+    async fn remove(
+        &self,
+        path: &AbsolutePathBuf,
+        remove_options: RemoveOptions,
+    ) -> io::Result<()> {
+        LOCAL_FS.remove(path, remove_options).await
+    }
+
+    async fn copy(
+        &self,
+        source_path: &AbsolutePathBuf,
+        destination_path: &AbsolutePathBuf,
+        copy_options: CopyOptions,
+    ) -> io::Result<()> {
+        LOCAL_FS
+            .copy(source_path, destination_path, copy_options)
+            .await
+    }
+}
 
 fn config_error_from_io(err: &std::io::Error) -> &ConfigError {
     err.get_ref()
@@ -105,6 +184,7 @@ async fn returns_config_error_for_invalid_user_config_toml() {
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -136,6 +216,7 @@ async fn ignore_user_config_keeps_empty_user_layer() -> std::io::Result<()> {
             ignore_user_config: true,
             ..Default::default()
         },
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -154,6 +235,34 @@ async fn ignore_user_config_keeps_empty_user_layer() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn strict_config_skips_ignored_user_config() -> std::io::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    std::fs::write(tmp.path().join(CONFIG_TOML_FILE), "unknown_key = true").expect("write config");
+
+    let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        tmp.path(),
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides {
+            ignore_user_config: true,
+            ..Default::default()
+        },
+        /*strict_config*/ true,
+        CloudRequirementsLoader::default(),
+        &agere_config::NoopThreadConfigLoader,
+    )
+    .await?;
+
+    let user_layer = layers
+        .get_user_layer()
+        .expect("expected a user layer even when AGERE_HOME/config.toml is ignored");
+    assert_eq!(user_layer.config, TomlValue::Table(toml::map::Map::new()));
+    Ok(())
+}
+
+#[tokio::test]
 async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io::Result<()> {
     let tmp = tempdir().expect("tempdir");
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
@@ -167,6 +276,7 @@ async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io:
             ignore_user_and_project_exec_policy_rules: true,
             ..Default::default()
         },
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -192,6 +302,7 @@ async fn returns_config_error_for_invalid_managed_config_toml() {
         Some(cwd),
         &[] as &[(String, TomlValue)],
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -225,6 +336,157 @@ async fn returns_config_error_for_schema_error_in_user_config() {
         agere_config::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
             .expect("schema error");
     assert_eq!(config_error, &expected_config_error);
+}
+
+#[tokio::test]
+async fn strict_config_rejects_unknown_user_config_key() {
+    let tmp = tempdir().expect("tempdir");
+    let contents = r#"model = "gpt-5"
+unknown_key = true"#;
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let err = ConfigBuilder::default()
+        .agere_home(tmp.path().to_path_buf())
+        .fallback_cwd(Some(tmp.path().to_path_buf()))
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .strict_config(/*strict_config*/ true)
+        .build()
+        .await
+        .expect_err("expected error");
+
+    let config_error = config_error_from_io(&err);
+    assert_eq!(
+        config_error.message,
+        "unknown configuration field `unknown_key`"
+    );
+    assert_eq!(config_error.path, config_path);
+    assert_eq!(config_error.range.start.line, 2);
+    assert_eq!(config_error.range.start.column, 1);
+}
+
+#[tokio::test]
+async fn strict_config_validates_config_with_configured_filesystem() {
+    let tmp = tempdir().expect("tempdir");
+    let config_path =
+        AbsolutePathBuf::try_from(tmp.path().join(CONFIG_TOML_FILE)).expect("absolute config path");
+    let fs = ConfigOverrideFileSystem {
+        config_path: config_path.clone(),
+        config_contents: r#"model = "gpt-5"
+unknown_key = true"#
+            .to_string(),
+    };
+
+    let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
+    let err = load_config_layers_state(
+        &fs,
+        tmp.path(),
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides::without_managed_config_for_tests(),
+        /*strict_config*/ true,
+        CloudRequirementsLoader::default(),
+        &agere_config::NoopThreadConfigLoader,
+    )
+    .await
+    .expect_err("expected error");
+
+    let config_error = config_error_from_io(&err);
+    assert_eq!(
+        config_error.message,
+        "unknown configuration field `unknown_key`"
+    );
+    assert_eq!(config_error.path, config_path.to_path_buf());
+}
+
+#[tokio::test]
+async fn strict_config_rejects_unknown_feature_key() {
+    let tmp = tempdir().expect("tempdir");
+    let contents = "[features]\nunknown_feature = true";
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let err = ConfigBuilder::default()
+        .agere_home(tmp.path().to_path_buf())
+        .fallback_cwd(Some(tmp.path().to_path_buf()))
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .strict_config(/*strict_config*/ true)
+        .build()
+        .await
+        .expect_err("expected error");
+
+    let config_error = config_error_from_io(&err);
+    assert_eq!(
+        config_error.message,
+        "unknown configuration field `features.unknown_feature`"
+    );
+    assert_eq!(config_error.path, config_path);
+    assert_eq!(config_error.range.start.line, 2);
+    assert_eq!(config_error.range.start.column, 1);
+}
+
+#[tokio::test]
+async fn strict_config_rejects_unknown_cli_override_key() {
+    let tmp = tempdir().expect("tempdir");
+
+    let err = ConfigBuilder::default()
+        .agere_home(tmp.path().to_path_buf())
+        .fallback_cwd(Some(tmp.path().to_path_buf()))
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .cli_overrides(vec![(
+            "foo".to_string(),
+            TomlValue::String("bar".to_string()),
+        )])
+        .strict_config(/*strict_config*/ true)
+        .build()
+        .await
+        .expect_err("expected error");
+
+    assert_eq!(
+        err.to_string(),
+        "unknown configuration field `foo` in -c/--config override"
+    );
+}
+
+#[tokio::test]
+async fn strict_config_rejects_unknown_feature_cli_override_key() {
+    let tmp = tempdir().expect("tempdir");
+
+    let err = ConfigBuilder::default()
+        .agere_home(tmp.path().to_path_buf())
+        .fallback_cwd(Some(tmp.path().to_path_buf()))
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .cli_overrides(vec![("features.foo".to_string(), TomlValue::Boolean(true))])
+        .strict_config(/*strict_config*/ true)
+        .build()
+        .await
+        .expect_err("expected error");
+
+    assert_eq!(
+        err.to_string(),
+        "unknown configuration field `features.foo` in -c/--config override"
+    );
+}
+
+#[tokio::test]
+async fn strict_config_skips_unknown_keys_in_disabled_project_layers() -> std::io::Result<()> {
+    let agere_home = tempdir().expect("tempdir");
+    let project = tempdir().expect("tempdir");
+    let dot_agere = project.path().join(".openagere");
+    std::fs::create_dir_all(&dot_agere).expect("create project config dir");
+    std::fs::write(dot_agere.join(CONFIG_TOML_FILE), "unknown_key = true")
+        .expect("write project config");
+
+    let config = ConfigBuilder::default()
+        .agere_home(agere_home.path().to_path_buf())
+        .fallback_cwd(Some(project.path().to_path_buf()))
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .strict_config(/*strict_config*/ true)
+        .build()
+        .await?;
+
+    assert!(config.model.is_none());
+    Ok(())
 }
 
 #[test]
@@ -278,6 +540,7 @@ extra = true
         Some(cwd),
         &[] as &[(String, TomlValue)],
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -312,6 +575,7 @@ async fn returns_empty_when_all_layers_missing() {
         Some(cwd),
         &[] as &[(String, TomlValue)],
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -384,6 +648,7 @@ async fn includes_thread_config_layers_in_stack() -> anyhow::Result<()> {
         Some(cwd),
         &[("features.plugins".to_string(), TomlValue::Boolean(true))],
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &StaticThreadConfigLoader::new(vec![ThreadConfigSource::Session(SessionThreadConfig {
             features: BTreeMap::from([("plugins".to_string(), false)]),
@@ -463,6 +728,7 @@ flag = false
         Some(cwd),
         &[] as &[(String, TomlValue)],
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -566,6 +832,7 @@ allowed_access_modes = ["read-only"]
         Some(AbsolutePathBuf::try_from(tmp.path())?),
         &[] as &[(String, TomlValue)],
         loader_overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -625,6 +892,7 @@ allowed_approval_policies = ["never"]
         Some(AbsolutePathBuf::try_from(tmp.path())?),
         &[] as &[(String, TomlValue)],
         loader_overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -764,6 +1032,7 @@ allowed_approval_policies = ["on-request"]
         Some(AbsolutePathBuf::try_from(tmp.path())?),
         &[] as &[(String, TomlValue)],
         loader_overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::new(async {
             Ok(Some(ConfigRequirementsToml {
                 allowed_approval_policies: Some(vec![AskForApproval::Never]),
@@ -1051,6 +1320,7 @@ async fn load_config_layers_includes_cloud_requirements() -> anyhow::Result<()> 
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         cloud_requirements,
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1113,6 +1383,7 @@ async fn load_config_layers_includes_cloud_hook_requirements() -> anyhow::Result
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         cloud_requirements,
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1154,6 +1425,7 @@ async fn load_config_layers_applies_matching_remote_access_config() -> anyhow::R
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         cloud_requirements,
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1192,6 +1464,7 @@ async fn load_config_layers_fails_when_cloud_requirements_loader_fails() -> anyh
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::new(async {
             Err(CloudRequirementsLoadError::new(
                 agere_config::CloudRequirementsLoadErrorCode::RequestFailed,
@@ -1246,6 +1519,7 @@ async fn project_layers_prefer_closest_cwd() -> std::io::Result<()> {
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1399,6 +1673,7 @@ async fn project_layer_is_added_when_dot_agere_exists_without_config_toml() -> s
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1442,6 +1717,7 @@ async fn agere_home_is_not_loaded_as_project_layer_from_home_dir() -> std::io::R
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1500,6 +1776,7 @@ async fn agere_home_within_project_tree_is_not_double_loaded() -> std::io::Resul
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1572,6 +1849,7 @@ async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<
         Some(cwd.clone()),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1612,6 +1890,7 @@ async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1679,6 +1958,7 @@ async fn project_trust_does_not_match_configured_alias_for_canonical_cwd() -> st
         Some(AbsolutePathBuf::from_absolute_path(&project_root)?),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1833,6 +2113,7 @@ async fn invalid_project_config_ignored_when_untrusted_or_unknown() -> std::io::
             Some(cwd.clone()),
             &[] as &[(String, TomlValue)],
             LoaderOverrides::default(),
+            /*strict_config*/ false,
             CloudRequirementsLoader::default(),
             &agere_config::NoopThreadConfigLoader,
         )
@@ -1902,6 +2183,7 @@ async fn project_layer_without_config_toml_is_disabled_when_untrusted_or_unknown
             Some(cwd.clone()),
             &[] as &[(String, TomlValue)],
             LoaderOverrides::default(),
+            /*strict_config*/ false,
             CloudRequirementsLoader::default(),
             &agere_config::NoopThreadConfigLoader,
         )
@@ -1963,6 +2245,7 @@ async fn cli_overrides_with_relative_paths_do_not_break_trust_check() -> std::io
         Some(cwd),
         &cli_overrides,
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -2007,6 +2290,7 @@ async fn project_root_markers_supports_alternate_markers() -> std::io::Result<()
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )

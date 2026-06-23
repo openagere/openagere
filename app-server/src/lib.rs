@@ -20,6 +20,7 @@ use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 
 use crate::config_manager::ConfigManager;
+use crate::connection_cleanup::ConnectionCleanupTasks;
 use crate::message_processor::MessageProcessor;
 use crate::message_processor::MessageProcessorArgs;
 use crate::outgoing_message::ConnectionId;
@@ -352,12 +353,14 @@ pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
     loader_overrides: LoaderOverrides,
+    strict_config: bool,
     default_analytics_enabled: bool,
 ) -> IoResult<()> {
     run_main_with_transport(
         arg0_paths,
         cli_config_overrides,
         loader_overrides,
+        strict_config,
         default_analytics_enabled,
         AppServerTransport::Stdio,
         SessionSource::VSCode,
@@ -389,6 +392,7 @@ pub async fn run_main_with_transport(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
     loader_overrides: LoaderOverrides,
+    strict_config: bool,
     default_analytics_enabled: bool,
     transport: AppServerTransport,
     session_source: SessionSource,
@@ -398,6 +402,7 @@ pub async fn run_main_with_transport(
         arg0_paths,
         cli_config_overrides,
         loader_overrides,
+        strict_config,
         default_analytics_enabled,
         transport,
         session_source,
@@ -412,6 +417,7 @@ pub async fn run_main_with_transport_options(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
     loader_overrides: LoaderOverrides,
+    strict_config: bool,
     default_analytics_enabled: bool,
     transport: AppServerTransport,
     session_source: SessionSource,
@@ -443,6 +449,7 @@ pub async fn run_main_with_transport_options(
         agere_home.to_path_buf(),
         cli_kv_overrides.clone(),
         loader_overrides,
+        strict_config,
         arg0_paths.clone(),
         Arc::new(NoopThreadConfigLoader),
     );
@@ -487,6 +494,12 @@ pub async fn run_main_with_transport_options(
     {
         Ok(config) => config,
         Err(err) => {
+            if strict_config {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidData,
+                    format!("strict config mode: {err}"),
+                ));
+            }
             let message = config_warning_from_error("Invalid configuration; using defaults.", &err);
             config_warnings.push(message);
             config_manager.load_default_config().await.map_err(|e| {
@@ -585,6 +598,18 @@ pub async fn run_main_with_transport_options(
     let graceful_signal_restart_enabled = !single_client_mode;
     let mut app_server_client_name_rx = None;
 
+    let unix_socket_startup_lock = match &transport {
+        AppServerTransport::UnixSocket { .. } => {
+            let startup_lock_path = app_server_startup_lock_path(&agere_home)?;
+            let startup_lock = acquire_app_server_startup_lock(startup_lock_path).await?;
+            if let AppServerTransport::UnixSocket { socket_path } = &transport {
+                prepare_control_socket_path(socket_path.as_path()).await?;
+            }
+            Some(startup_lock)
+        }
+        _ => None,
+    };
+
     match &transport {
         AppServerTransport::Stdio => {
             let (stdio_client_name_tx, stdio_client_name_rx) = oneshot::channel::<String>();
@@ -617,6 +642,8 @@ pub async fn run_main_with_transport_options(
         }
         AppServerTransport::Off => {}
     }
+
+    drop(unix_socket_startup_lock);
 
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_agere_api_key_env*/ false).await;
@@ -735,6 +762,7 @@ pub async fn run_main_with_transport_options(
         async move {
             let mut listen_for_threads = true;
             let mut shutdown_state = ShutdownState::default();
+            let mut connection_cleanup_tasks = ConnectionCleanupTasks::new();
             loop {
                 let running_turn_count = {
                     let running_turn_count = running_turn_count_rx.borrow();
@@ -812,6 +840,7 @@ pub async fn run_main_with_transport_options(
                                 let Some(connection_state) = connections.remove(&connection_id) else {
                                     continue;
                                 };
+                                connection_state.session.rpc_gate.close().await;
                                 if outbound_control_tx
                                     .send(OutboundControlEvent::Closed { connection_id })
                                     .await
@@ -819,7 +848,12 @@ pub async fn run_main_with_transport_options(
                                 {
                                     break;
                                 }
-                                processor.connection_closed(connection_id, &connection_state.session).await;
+                                let processor = Arc::clone(&processor);
+                                connection_cleanup_tasks.spawn(async move {
+                                    processor
+                                        .connection_closed(connection_id, &connection_state.session)
+                                        .await;
+                                });
                                 if shutdown_when_no_connections && connections.is_empty() {
                                     break;
                                 }
@@ -955,6 +989,7 @@ pub async fn run_main_with_transport_options(
                             }
                         }
                     }
+                    _ = connection_cleanup_tasks.reap_next() => {}
                 }
             }
 
@@ -965,8 +1000,11 @@ pub async fn run_main_with_transport_options(
                         .map(|connection_state| connection_state.session.rpc_gate.shutdown()),
                 )
                 .await;
+                connection_cleanup_tasks.drain().await;
                 processor.drain_background_tasks().await;
                 processor.shutdown_threads().await;
+            } else {
+                connection_cleanup_tasks.abort();
             }
             info!("processor task exited (channel closed)");
         }
@@ -1021,3 +1059,7 @@ mod tests {
         assert_eq!(LogFormat::from_env_value(Some("jsonl")), LogFormat::Default);
     }
 }
+use crate::transport::acquire_app_server_startup_lock;
+use crate::transport::app_server_startup_lock_path;
+use crate::transport::prepare_control_socket_path;
+mod connection_cleanup;

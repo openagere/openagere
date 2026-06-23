@@ -10184,6 +10184,7 @@ mod tests {
             temp_dir.path().to_path_buf(),
             Vec::new(),
             LoaderOverrides::default(),
+            /*strict_config*/ false,
             Arg0DispatchPaths::default(),
             Arc::new(StaticThreadConfigLoader::new(vec![
                 ThreadConfigSource::Session(SessionThreadConfig {

@@ -559,7 +559,19 @@ impl MessageProcessor {
         connection_id: ConnectionId,
         session_state: &ConnectionSessionState,
     ) {
-        session_state.rpc_gate.shutdown().await;
+        if timeout(
+            CONNECTION_RPC_DRAIN_TIMEOUT,
+            session_state.rpc_gate.shutdown(),
+        )
+        .await
+        .is_err()
+        {
+            tracing::warn!(
+                ?connection_id,
+                timeout_seconds = CONNECTION_RPC_DRAIN_TIMEOUT.as_secs(),
+                "timed out waiting for connection RPCs to drain"
+            );
+        }
         self.outgoing.connection_closed(connection_id).await;
         self.fs_watch_manager.connection_closed(connection_id).await;
         self.agere_message_processor
@@ -1234,6 +1246,7 @@ fn migration_items_need_runtime_refresh(items: &[ExternalAgentConfigMigrationIte
 
 #[cfg(test)]
 mod tracing_tests;
+const CONNECTION_RPC_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests {

@@ -665,6 +665,7 @@ pub async fn list_skills(sess: &Session, sub_id: String, cwds: Vec<PathBuf>, for
             Some(cwd_abs.clone()),
             empty_cli_overrides,
             LoaderOverrides::default(),
+            /*strict_config*/ false,
             CloudRequirementsLoader::default(),
             &agere_config::NoopThreadConfigLoader,
         )

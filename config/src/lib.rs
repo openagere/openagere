@@ -20,6 +20,7 @@ mod requirements_exec_policy;
 pub mod schema;
 mod skills_config;
 mod state;
+mod strict_config;
 mod thread_config;
 mod tui_keymap;
 pub mod types;

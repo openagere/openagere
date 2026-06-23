@@ -1703,7 +1703,7 @@ async fn get_account_omits_chatgpt_after_permanent_refresh_failure() -> Result<(
         .mount(&server)
         .await;
 
-    let refresh_url = format!("{}/oauth/token", server.uri());
+    let _refresh_url = format!("{}/oauth/token", server.uri());
     let mut mcp = McpProcess::new_with_env(agere_home.path(), &[("OPENAI_API_KEY", None)]).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
 

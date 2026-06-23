@@ -397,6 +397,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
             args.config.agere_home.to_path_buf(),
             args.cli_overrides,
             args.loader_overrides,
+            /*strict_config*/ false,
             args.arg0_paths.clone(),
             args.thread_config_loader,
         );

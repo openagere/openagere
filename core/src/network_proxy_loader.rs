@@ -52,6 +52,7 @@ async fn build_config_state_with_mtimes() -> Result<(ConfigState, Vec<LayerMtime
         /*cwd*/ None,
         &cli_overrides,
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )

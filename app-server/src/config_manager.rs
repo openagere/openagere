@@ -28,6 +28,7 @@ pub(crate) struct ConfigManager {
     cli_overrides: Arc<RwLock<Vec<(String, TomlValue)>>>,
     runtime_feature_enablement: Arc<RwLock<BTreeMap<String, bool>>>,
     loader_overrides: LoaderOverrides,
+    strict_config: bool,
     arg0_paths: Arg0DispatchPaths,
     thread_config_loader: Arc<RwLock<Arc<dyn ThreadConfigLoader>>>,
 }
@@ -37,6 +38,7 @@ impl ConfigManager {
         agere_home: PathBuf,
         cli_overrides: Vec<(String, TomlValue)>,
         loader_overrides: LoaderOverrides,
+        strict_config: bool,
         arg0_paths: Arg0DispatchPaths,
         thread_config_loader: Arc<dyn ThreadConfigLoader>,
     ) -> Self {
@@ -45,6 +47,7 @@ impl ConfigManager {
             cli_overrides: Arc::new(RwLock::new(cli_overrides)),
             runtime_feature_enablement: Arc::new(RwLock::new(BTreeMap::new())),
             loader_overrides,
+            strict_config,
             arg0_paths,
             thread_config_loader: Arc::new(RwLock::new(thread_config_loader)),
         }
@@ -176,6 +179,7 @@ impl ConfigManager {
             .agere_home(self.agere_home.clone())
             .cli_overrides(merged_cli_overrides)
             .loader_overrides(self.loader_overrides.clone())
+            .strict_config(self.strict_config)
             .harness_overrides(typesafe_overrides)
             .fallback_cwd(fallback_cwd)
             .thread_config_loader(self.current_thread_config_loader())
@@ -204,6 +208,7 @@ impl ConfigManager {
             cwd,
             &self.current_cli_overrides(),
             self.loader_overrides.clone(),
+            self.strict_config,
             CloudRequirementsLoader::default(),
             thread_config_loader.as_ref(),
         )
@@ -238,6 +243,7 @@ impl ConfigManager {
             agere_home,
             cli_overrides,
             loader_overrides,
+            /*strict_config*/ false,
             Arg0DispatchPaths::default(),
             thread_config_loader,
         )

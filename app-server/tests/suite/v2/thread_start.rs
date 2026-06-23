@@ -611,7 +611,7 @@ async fn thread_start_surfaces_cloud_requirements_load_errors() -> Result<()> {
         AuthCredentialsStoreMode::File,
     )?;
 
-    let refresh_token_url = format!("{}/oauth/token", server.uri());
+    let _refresh_token_url = format!("{}/oauth/token", server.uri());
     let mut mcp = McpProcess::new_with_env(agere_home.path(), &[("OPENAI_API_KEY", None)]).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
 

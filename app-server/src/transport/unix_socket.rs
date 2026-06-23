@@ -1,3 +1,4 @@
+use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
 use std::path::Path;
@@ -89,7 +90,7 @@ async fn run_control_socket_acceptor(
     info!("control socket acceptor shutting down");
 }
 
-async fn prepare_control_socket_path(socket_path: &Path) -> IoResult<()> {
+pub(crate) async fn prepare_control_socket_path(socket_path: &Path) -> IoResult<()> {
     if let Some(parent) = socket_path.parent() {
         agere_uds::prepare_private_socket_directory(parent).await?;
     }
@@ -148,6 +149,31 @@ async fn set_control_socket_permissions(_socket_path: &Path) -> IoResult<()> {
 
 struct ControlSocketFileGuard {
     socket_path: AbsolutePathBuf,
+}
+
+pub(crate) struct AppServerStartupLock {
+    _file: std::fs::File,
+}
+
+pub(crate) async fn acquire_app_server_startup_lock(
+    startup_lock_path: AbsolutePathBuf,
+) -> IoResult<AppServerStartupLock> {
+    if let Some(parent) = startup_lock_path.as_path().parent() {
+        agere_uds::prepare_private_socket_directory(parent).await?;
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(startup_lock_path.as_path())?;
+        file.lock()?;
+        Ok(AppServerStartupLock { _file: file })
+    })
+    .await
+    .map_err(|err| std::io::Error::other(format!("startup lock task failed: {err}")))?
 }
 
 impl Drop for ControlSocketFileGuard {

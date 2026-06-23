@@ -2910,6 +2910,7 @@ async fn managed_config_overrides_oauth_store_mode() -> anyhow::Result<()> {
         Some(cwd),
         &Vec::new(),
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -3045,6 +3046,7 @@ async fn managed_config_wins_over_cli_overrides() -> anyhow::Result<()> {
         Some(cwd),
         &[("model".to_string(), TomlValue::String("cli".to_string()))],
         overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )

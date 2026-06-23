@@ -785,6 +785,7 @@ pub struct ConfigBuilder {
     cli_overrides: Option<Vec<(String, TomlValue)>>,
     harness_overrides: Option<ConfigOverrides>,
     loader_overrides: Option<LoaderOverrides>,
+    strict_config: bool,
     cloud_requirements: CloudRequirementsLoader,
     thread_config_loader: Option<Arc<dyn ThreadConfigLoader>>,
     fallback_cwd: Option<PathBuf>,
@@ -808,6 +809,11 @@ impl ConfigBuilder {
 
     pub fn loader_overrides(mut self, loader_overrides: LoaderOverrides) -> Self {
         self.loader_overrides = Some(loader_overrides);
+        self
+    }
+
+    pub fn strict_config(mut self, strict_config: bool) -> Self {
+        self.strict_config = strict_config;
         self
     }
 
@@ -835,6 +841,7 @@ impl ConfigBuilder {
             cli_overrides,
             harness_overrides,
             loader_overrides,
+            strict_config,
             cloud_requirements,
             thread_config_loader,
             fallback_cwd,
@@ -858,6 +865,7 @@ impl ConfigBuilder {
             Some(cwd),
             &cli_overrides,
             loader_overrides,
+            strict_config,
             cloud_requirements,
             thread_config_loader
                 .as_deref()
@@ -1054,6 +1062,7 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
         cwd.cloned(),
         &cli_overrides,
         loader_overrides,
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )
@@ -1235,6 +1244,7 @@ pub async fn load_global_mcp_servers(
         cwd,
         &cli_overrides,
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         CloudRequirementsLoader::default(),
         &agere_config::NoopThreadConfigLoader,
     )

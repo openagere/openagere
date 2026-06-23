@@ -13,7 +13,6 @@ use agere_app_server_protocol::AppReview;
 use agere_app_server_protocol::AppScreenshot;
 use agere_app_server_protocol::AppsListParams;
 use agere_app_server_protocol::AppsListResponse;
-use agere_app_server_protocol::AuthMode;
 use agere_app_server_protocol::ExperimentalFeatureEnablementSetParams;
 use agere_app_server_protocol::JSONRPCError;
 use agere_app_server_protocol::JSONRPCResponse;

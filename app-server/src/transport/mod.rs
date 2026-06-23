@@ -48,12 +48,21 @@ pub(crate) use websocket::start_websocket_acceptor;
 
 const APP_SERVER_CONTROL_SOCKET_DIR_NAME: &str = "app-server-control";
 const APP_SERVER_CONTROL_SOCKET_FILE_NAME: &str = "app-server-control.sock";
+const APP_SERVER_STARTUP_LOCK_FILE_NAME: &str = "app-server-startup.lock";
 
 pub fn app_server_control_socket_path(agere_home: &Path) -> std::io::Result<AbsolutePathBuf> {
     AbsolutePathBuf::from_absolute_path(
         agere_home
             .join(APP_SERVER_CONTROL_SOCKET_DIR_NAME)
             .join(APP_SERVER_CONTROL_SOCKET_FILE_NAME),
+    )
+}
+
+pub(crate) fn app_server_startup_lock_path(agere_home: &Path) -> std::io::Result<AbsolutePathBuf> {
+    AbsolutePathBuf::from_absolute_path(
+        agere_home
+            .join(APP_SERVER_CONTROL_SOCKET_DIR_NAME)
+            .join(APP_SERVER_STARTUP_LOCK_FILE_NAME),
     )
 }
 
@@ -467,6 +476,8 @@ pub(crate) async fn route_outgoing_envelope(
         }
     }
 }
+pub(crate) use unix_socket::acquire_app_server_startup_lock;
+pub(crate) use unix_socket::prepare_control_socket_path;
 
 #[cfg(test)]
 mod tests {

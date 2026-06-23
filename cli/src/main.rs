@@ -406,6 +406,10 @@ struct AppServerCommand {
     #[arg(long = "analytics-default-enabled")]
     analytics_default_enabled: bool,
 
+    /// Fail if config.toml contains unknown configuration fields.
+    #[arg(long = "strict-config", default_value_t = false)]
+    strict_config: bool,
+
     #[command(flatten)]
     auth: agere_app_server::AppServerWebsocketAuthArgs,
 }
@@ -810,6 +814,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 subcommand,
                 listen,
                 analytics_default_enabled,
+                strict_config,
                 auth,
             } = app_server_cli;
             reject_remote_mode_for_app_server_subcommand(
@@ -825,6 +830,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         arg0_paths.clone(),
                         root_config_overrides,
                         agere_config::LoaderOverrides::default(),
+                        strict_config,
                         analytics_default_enabled,
                         transport,
                         agere_protocol::protocol::SessionSource::VSCode,

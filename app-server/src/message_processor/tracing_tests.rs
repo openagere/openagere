@@ -270,6 +270,7 @@ async fn build_test_processor(
         config.agere_home.to_path_buf(),
         Vec::new(),
         LoaderOverrides::default(),
+        /*strict_config*/ false,
         Arg0DispatchPaths::default(),
         Arc::new(agere_config::NoopThreadConfigLoader),
     );
