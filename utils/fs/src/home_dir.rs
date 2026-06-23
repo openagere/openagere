@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Returns the path to the Agere configuration directory, which can be
 /// specified by the `AGERE_HOME` environment variable. If not set, defaults to
-/// `~/.agere`.
+/// `~/.openagere`.
 pub fn find_agere_home() -> std::io::Result<AbsolutePathBuf> {
     let agere_home_env = std::env::var("AGERE_HOME")
         .ok()

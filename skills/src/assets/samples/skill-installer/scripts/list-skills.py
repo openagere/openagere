@@ -32,7 +32,7 @@ def _request(url: str) -> bytes:
 
 
 def _agere_home() -> str:
-    return os.environ.get("AGERE_HOME", os.path.expanduser("~/.agere"))
+    return os.environ.get("AGERE_HOME", os.path.expanduser("~/.openagere"))
 
 
 def _installed_skills() -> set[str]:

@@ -1195,7 +1195,7 @@ pub struct ExternalAgentConfigDetectResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ExternalAgentConfigDetectParams {
-    /// If true, include detection under the user's home (~/.claude, ~/.agere, etc.).
+    /// If true, include detection under the user's home (~/.claude, ~/.openagere, etc.).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub include_home: bool,
     /// Zero or more working directories to include for repo-scoped detection.

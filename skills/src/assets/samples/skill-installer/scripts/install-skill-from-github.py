@@ -43,7 +43,7 @@ class InstallError(Exception):
 
 
 def _agere_home() -> str:
-    return os.environ.get("AGERE_HOME", os.path.expanduser("~/.agere"))
+    return os.environ.get("AGERE_HOME", os.path.expanduser("~/.openagere"))
 
 
 def _tmp_root() -> str:

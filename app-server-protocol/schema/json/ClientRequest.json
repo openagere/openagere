@@ -909,7 +909,7 @@
           ]
         },
         "includeHome": {
-          "description": "If true, include detection under the user's home (~/.claude, ~/.agere, etc.).",
+          "description": "If true, include detection under the user's home (~/.claude, ~/.openagere, etc.).",
           "type": "boolean"
         }
       },

@@ -165,7 +165,7 @@ pub fn fetch_dotslash_file(
 
 /// Returns a default `Config` whose on-disk state is confined to the provided
 /// temporary directory. Using a per-test directory keeps tests hermetic and
-/// avoids clobbering a developer’s real `~/.agere`.
+/// avoids clobbering a developer's real `~/.openagere`.
 pub async fn load_default_config_for_test(agere_home: &TempDir) -> Config {
     load_default_config_for_test_with_cloud_requirements(
         agere_home,

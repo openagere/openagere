@@ -15,7 +15,7 @@ use owo_colors::OwoColorize;
 #[command(name = "agere-state-logs")]
 #[command(about = "Tail Agere logs from the dedicated logs SQLite DB with simple filters")]
 struct Args {
-    /// Path to AGERE_HOME. Defaults to $AGERE_HOME or ~/.agere.
+    /// Path to AGERE_HOME. Defaults to $AGERE_HOME or ~/.openagere.
     #[arg(long, env = "AGERE_HOME")]
     agere_home: Option<PathBuf>,
 

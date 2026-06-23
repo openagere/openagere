@@ -3872,7 +3872,7 @@
     },
     "project_root_markers": {
       "default": null,
-      "description": "Markers used to detect the project root when searching parent directories for `.agere` folders. Defaults to [\".git\"] when unset.",
+      "description": "Markers used to detect the project root when searching parent directories for `.openagere` folders. Defaults to [\".git\"] when unset.",
       "items": {
         "type": "string"
       },

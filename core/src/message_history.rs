@@ -44,7 +44,7 @@ use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-/// Filename that stores the message history inside `~/.agere`.
+/// Filename that stores the message history inside `~/.openagere`.
 const HISTORY_FILENAME: &str = "history.jsonl";
 
 /// When history exceeds the hard cap, trim it down to this fraction of `max_bytes`.

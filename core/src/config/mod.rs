@@ -544,7 +544,7 @@ pub struct Config {
     /// `1m, 2m, 5m, 10m, ...` schedule with `resets_at`-aware waits.
     pub rate_limit_retry: RateLimitRetryConfig,
 
-    /// Directory containing all Agere state (defaults to `~/.agere` but can be
+    /// Directory containing all Agere state (defaults to `~/.openagere` but can be
     /// overridden by the `AGERE_HOME` environment variable).
     pub agere_home: AbsolutePathBuf,
 
@@ -2889,7 +2889,7 @@ fn toml_uses_deprecated_instructions_file(value: &TomlValue) -> bool {
 
 /// Returns the path to the Agere configuration directory, which can be
 /// specified by the `AGERE_HOME` environment variable. If not set, defaults to
-/// `~/.agere`.
+/// `~/.openagere`.
 ///
 /// - If `AGERE_HOME` is set, the value must exist and be a directory. The
 ///   value will be canonicalized and this function will Err otherwise.

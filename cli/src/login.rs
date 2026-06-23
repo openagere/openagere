@@ -172,7 +172,7 @@ pub async fn run_login_with_agent_identity(
 
 pub fn read_api_key_from_stdin() -> String {
     read_stdin_secret(
-        "--with-api-key expects the API key on stdin. Try piping it, e.g. `cat ~/.agere-api-key | agere login --with-api-key`.",
+        "--with-api-key expects the API key on stdin. Try piping it, e.g. `cat ~/.openagere-api-key | agere login --with-api-key`.",
         "Reading API key from stdin...",
         "No API key provided via stdin.",
     )

@@ -27,3 +27,28 @@ pub(crate) fn runtime_state_migrator() -> Migrator {
 pub(crate) fn runtime_logs_migrator() -> Migrator {
     runtime_migrator(&LOGS_MIGRATOR)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    #[test]
+    fn migration_sql_files_use_lf_line_endings() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for dir in ["migrations", "logs_migrations"] {
+            for entry in fs::read_dir(manifest_dir.join(dir)).expect("read migrations dir") {
+                let path = entry.expect("read migration entry").path();
+                if path.extension().and_then(|extension| extension.to_str()) != Some("sql") {
+                    continue;
+                }
+                let migration = fs::read_to_string(&path).expect("read migration file");
+
+                assert!(
+                    !migration.contains("\r\n"),
+                    "sqlx migration checksums are line-ending sensitive: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+}

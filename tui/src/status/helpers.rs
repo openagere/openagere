@@ -146,6 +146,30 @@ pub(crate) fn format_tokens_compact(value: i64) -> String {
     format!("{formatted}{suffix}")
 }
 
+/// Format token count with exactly one decimal place for aligned provider rows.
+pub(crate) fn format_tokens_fixed_1(value: i64) -> String {
+    let value = value.max(0);
+    if value == 0 {
+        return "0.0".to_string();
+    }
+    if value < 1_000 {
+        return format!("{value}.0");
+    }
+
+    let value_f64 = value as f64;
+    let (scaled, suffix) = if value >= 1_000_000_000_000 {
+        (value_f64 / 1_000_000_000_000.0, "T")
+    } else if value >= 1_000_000_000 {
+        (value_f64 / 1_000_000_000.0, "B")
+    } else if value >= 1_000_000 {
+        (value_f64 / 1_000_000.0, "M")
+    } else {
+        (value_f64 / 1_000.0, "K")
+    };
+
+    format!("{scaled:.1}{suffix}")
+}
+
 pub(crate) fn format_directory_display(directory: &Path, max_width: Option<usize>) -> String {
     let formatted = if let Some(rel) = relativize_to_home(directory) {
         if rel.as_os_str().is_empty() {
