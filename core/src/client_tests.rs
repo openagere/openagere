@@ -8,8 +8,9 @@ use super::X_AGERE_PARENT_THREAD_ID_HEADER;
 use super::X_AGERE_TURN_METADATA_HEADER;
 use super::X_AGERE_WINDOW_ID_HEADER;
 use super::X_OPENAI_SUBAGENT_HEADER;
-use super::anthropic_tool_definition_from_function_spec;
-use super::chat_tool_definition_from_function_spec;
+use super::anthropic_tool_definitions_from_function_spec;
+use super::chat_tool_definitions_from_function_spec;
+use super::input_items_for_flat_wire_api;
 use agere_api::ApiError;
 use agere_api::ResponseEvent;
 use agere_app_server_protocol::AuthMode;
@@ -19,6 +20,7 @@ use agere_model_provider_info::create_oss_provider_with_base_url;
 use agere_otel::SessionTelemetry;
 use agere_protocol::ThreadId;
 use agere_protocol::models::ContentItem;
+use agere_protocol::models::FunctionCallOutputPayload;
 use agere_protocol::models::ReasoningItemReasoningSummary;
 use agere_protocol::models::ResponseItem;
 use agere_protocol::openai_models::ModelInfo;
@@ -33,6 +35,8 @@ use agere_rollout_trace::RolloutTrace;
 use agere_rollout_trace::TraceWriter;
 use agere_rollout_trace::replay_bundle;
 use agere_tools::JsonSchema;
+use agere_tools::ResponsesApiNamespace;
+use agere_tools::ResponsesApiNamespaceTool;
 use agere_tools::ResponsesApiTool;
 use agere_tools::ToolSpec;
 use agere_tools::create_apply_patch_freeform_tool;
@@ -217,8 +221,8 @@ fn stream_sanitization_preserves_anthropic_without_provider_switch_signal() {
 fn non_responses_tool_translation_skips_freeform_apply_patch() {
     let apply_patch = create_apply_patch_freeform_tool();
 
-    assert!(chat_tool_definition_from_function_spec(&apply_patch).is_none());
-    assert!(anthropic_tool_definition_from_function_spec(&apply_patch).is_none());
+    assert!(chat_tool_definitions_from_function_spec(&apply_patch).is_empty());
+    assert!(anthropic_tool_definitions_from_function_spec(&apply_patch).is_empty());
 }
 
 #[test]
@@ -238,12 +242,176 @@ fn non_responses_tool_translation_keeps_function_tools() {
         output_schema: None,
     });
 
-    let chat_tool = chat_tool_definition_from_function_spec(&tool).expect("chat tool");
-    let anthropic_tool =
-        anthropic_tool_definition_from_function_spec(&tool).expect("anthropic tool");
+    let chat_tools = chat_tool_definitions_from_function_spec(&tool);
+    let anthropic_tools = anthropic_tool_definitions_from_function_spec(&tool);
 
-    assert_eq!(chat_tool.parameters["type"], "object");
-    assert_eq!(anthropic_tool.parameters["type"], "object");
+    assert_eq!(chat_tools.len(), 1);
+    assert_eq!(anthropic_tools.len(), 1);
+    assert_eq!(chat_tools[0].parameters["type"], "object");
+    assert_eq!(anthropic_tools[0].parameters["type"], "object");
+}
+
+#[test]
+fn non_responses_tool_translation_flattens_namespace_tools() {
+    let namespace = ToolSpec::Namespace(ResponsesApiNamespace {
+        name: "mcp__calendar__".to_string(),
+        description: "Calendar tools".to_string(),
+        tools: vec![
+            ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "create_event".to_string(),
+                description: "Create an event".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(
+                    BTreeMap::new(),
+                    /*required*/ None,
+                    Some(false.into()),
+                ),
+                output_schema: None,
+            }),
+            ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "_list_events".to_string(),
+                description: "List events".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(
+                    BTreeMap::new(),
+                    /*required*/ None,
+                    Some(false.into()),
+                ),
+                output_schema: None,
+            }),
+        ],
+    });
+
+    let chat_tools = chat_tool_definitions_from_function_spec(&namespace);
+    let anthropic_tools = anthropic_tool_definitions_from_function_spec(&namespace);
+
+    assert_eq!(
+        chat_tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["mcp__calendar__create_event", "mcp__calendar___list_events"]
+    );
+    assert_eq!(
+        anthropic_tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["mcp__calendar__create_event", "mcp__calendar___list_events"]
+    );
+    assert_eq!(chat_tools[0].description, "Create an event");
+    assert_eq!(anthropic_tools[1].description, "List events");
+}
+
+#[test]
+fn flat_wire_api_input_rewrites_namespaced_function_call_history() {
+    let tools = vec![ToolSpec::Namespace(ResponsesApiNamespace {
+        name: "mcp__calendar__".to_string(),
+        description: "Calendar tools".to_string(),
+        tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: "Create an event".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+            output_schema: None,
+        })],
+    })];
+    let input = vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "create_event".to_string(),
+            namespace: Some("mcp__calendar__".to_string()),
+            arguments: "{}".to_string(),
+            call_id: "call-1".to_string(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id: "call-1".to_string(),
+            output: FunctionCallOutputPayload::from_text("ok".to_string()),
+        },
+    ];
+
+    let projection = agere_tools::FlatWireToolProjection::new(&tools);
+    let rewritten = input_items_for_flat_wire_api(&input, &projection);
+
+    assert_eq!(
+        rewritten[0],
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "mcp__calendar__create_event".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: "call-1".to_string(),
+        }
+    );
+    assert_eq!(rewritten[1], input[1]);
+}
+
+#[test]
+fn flat_wire_api_input_uses_disambiguated_history_names() {
+    let tools = vec![
+        ToolSpec::Namespace(ResponsesApiNamespace {
+            name: "foo".to_string(),
+            description: "Foo tools".to_string(),
+            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "bar_baz".to_string(),
+                description: "First namespaced tool".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+                output_schema: None,
+            })],
+        }),
+        ToolSpec::Namespace(ResponsesApiNamespace {
+            name: "foo_bar".to_string(),
+            description: "Foo bar tools".to_string(),
+            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "baz".to_string(),
+                description: "Second namespaced tool".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+                output_schema: None,
+            })],
+        }),
+    ];
+    let projection = agere_tools::FlatWireToolProjection::new(&tools);
+    let input = vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "bar_baz".to_string(),
+            namespace: Some("foo".to_string()),
+            arguments: "{}".to_string(),
+            call_id: "call-1".to_string(),
+        },
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "baz".to_string(),
+            namespace: Some("foo_bar".to_string()),
+            arguments: "{}".to_string(),
+            call_id: "call-2".to_string(),
+        },
+    ];
+
+    let rewritten = input_items_for_flat_wire_api(&input, &projection);
+    let names = rewritten
+        .iter()
+        .map(|item| match item {
+            ResponseItem::FunctionCall {
+                name, namespace, ..
+            } => {
+                assert!(namespace.is_none());
+                name.as_str()
+            }
+            other => panic!("expected function call, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1]);
+    assert!(names.iter().all(|name| name.starts_with("foo_bar_baz__")));
 }
 
 fn started_inference_attempt(temp: &TempDir) -> anyhow::Result<InferenceTraceAttempt> {

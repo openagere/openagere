@@ -8665,7 +8665,8 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
         input: "{}".to_string(),
     };
 
-    let call = ToolRouter::build_tool_call(session.as_ref(), item.clone())
+    let call = router
+        .build_tool_call(session.as_ref(), item.clone())
         .await
         .expect("build tool call")
         .expect("tool call present");

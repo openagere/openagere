@@ -173,6 +173,7 @@ impl ToolRouter {
 
     #[instrument(level = "trace", skip_all, err)]
     pub async fn build_tool_call(
+        &self,
         session: &Session,
         item: ResponseItem,
     ) -> Result<Option<ToolCall>, FunctionCallError> {
@@ -184,7 +185,11 @@ impl ToolRouter {
                 call_id,
                 ..
             } => {
-                let tool_name = ToolName::new(namespace, name);
+                let tool_name = if let Some(namespace) = namespace {
+                    ToolName::namespaced(namespace, name)
+                } else {
+                    agere_tools::resolve_flattened_tool_name(&self.model_visible_specs, &name)
+                };
                 if let Some(tool_info) = session.resolve_mcp_tool_info(&tool_name).await {
                     Ok(Some(ToolCall {
                         tool_name: tool_info.canonical_tool_name(),

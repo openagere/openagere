@@ -3,9 +3,13 @@ use std::sync::Arc;
 
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolRegistry;
 use agere_protocol::dynamic_tools::DynamicToolSpec;
 use agere_protocol::models::ResponseItem;
+use agere_tools::JsonSchema;
+use agere_tools::ResponsesApiNamespace;
 use agere_tools::ResponsesApiNamespaceTool;
+use agere_tools::ResponsesApiTool;
 use agere_tools::ToolName;
 use agere_tools::ToolSpec;
 use pretty_assertions::assert_eq;
@@ -69,26 +73,79 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
 async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()> {
     let (session, _) = make_session_and_context().await;
     let session = Arc::new(session);
+    let router = empty_router();
     let tool_name = "create_event".to_string();
 
-    let call = ToolRouter::build_tool_call(
-        &session,
-        ResponseItem::FunctionCall {
-            id: None,
-            name: tool_name.clone(),
-            namespace: Some("mcp__agere_apps__calendar".to_string()),
-            arguments: "{}".to_string(),
-            call_id: "call-namespace".to_string(),
-        },
-    )
-    .await?
-    .expect("function_call should produce a tool call");
+    let call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: tool_name.clone(),
+                namespace: Some("mcp__agere_apps__calendar".to_string()),
+                arguments: "{}".to_string(),
+                call_id: "call-namespace".to_string(),
+            },
+        )
+        .await?
+        .expect("function_call should produce a tool call");
 
     assert_eq!(
         call.tool_name,
         ToolName::namespaced("mcp__agere_apps__calendar", tool_name)
     );
     assert_eq!(call.call_id, "call-namespace");
+    match call.payload {
+        ToolPayload::Function { arguments } => {
+            assert_eq!(arguments, "{}");
+        }
+        other => panic!("expected function payload, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_tool_call_resolves_flattened_namespace_function_name() -> anyhow::Result<()> {
+    let (session, _) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let router = ToolRouter {
+        registry: ToolRegistry::empty_for_test(),
+        specs: Vec::new(),
+        model_visible_specs: vec![ToolSpec::Namespace(ResponsesApiNamespace {
+            name: "agere_app".to_string(),
+            description: "Agere app tools".to_string(),
+            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "automation_list".to_string(),
+                description: "List automations".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+                output_schema: None,
+            })],
+        })],
+        parallel_mcp_server_names: HashSet::new(),
+    };
+
+    let call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "agere_app_automation_list".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+                call_id: "call-flattened".to_string(),
+            },
+        )
+        .await?
+        .expect("function_call should produce a tool call");
+
+    assert_eq!(
+        call.tool_name,
+        ToolName::namespaced("agere_app", "automation_list")
+    );
+    assert_eq!(call.call_id, "call-flattened");
     match call.payload {
         ToolPayload::Function { arguments } => {
             assert_eq!(arguments, "{}");
@@ -220,4 +277,13 @@ fn namespace_function_names(specs: &[ToolSpec], namespace_name: &str) -> Vec<Str
             | ToolSpec::Namespace(_) => None,
         })
         .unwrap_or_default()
+}
+
+fn empty_router() -> ToolRouter {
+    ToolRouter {
+        registry: ToolRegistry::empty_for_test(),
+        specs: Vec::new(),
+        model_visible_specs: Vec::new(),
+        parallel_mcp_server_names: HashSet::new(),
+    }
 }

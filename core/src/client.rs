@@ -92,7 +92,7 @@ use agere_protocol::protocol::W3cTraceContext;
 use agere_rollout_trace::CompactionTraceContext;
 use agere_rollout_trace::InferenceTraceAttempt;
 use agere_rollout_trace::InferenceTraceContext;
-use agere_tools::ToolSpec;
+use agere_tools::ToolName;
 use agere_tools::create_tools_json_for_responses_api;
 use eventsource_stream::Event;
 use eventsource_stream::EventStreamError;
@@ -896,28 +896,82 @@ impl Drop for ModelClientSession {
     }
 }
 
-fn anthropic_tool_definition_from_function_spec(spec: &ToolSpec) -> Option<AnthropicToolDef> {
-    let ToolSpec::Function(tool) = spec else {
-        return None;
-    };
-    Some(AnthropicToolDef {
-        name: tool.name.clone(),
-        description: tool.description.clone(),
-        parameters: serde_json::to_value(&tool.parameters).ok()?,
-    })
+fn anthropic_tool_definitions_from_projection(
+    projection: &agere_tools::FlatWireToolProjection,
+) -> Vec<AnthropicToolDef> {
+    projection
+        .function_tools()
+        .iter()
+        .filter_map(|tool| {
+            Some(AnthropicToolDef {
+                name: tool.wire_name.clone(),
+                description: tool.description.clone(),
+                parameters: serde_json::to_value(&tool.parameters).ok()?,
+            })
+        })
+        .collect()
 }
 
-fn chat_tool_definition_from_function_spec(
-    spec: &ToolSpec,
-) -> Option<agere_openai_chat_client::ToolDefinition> {
-    let ToolSpec::Function(tool) = spec else {
-        return None;
-    };
-    Some(agere_openai_chat_client::ToolDefinition {
-        name: tool.name.clone(),
-        description: tool.description.clone(),
-        parameters: serde_json::to_value(&tool.parameters).ok()?,
-    })
+fn chat_tool_definitions_from_projection(
+    projection: &agere_tools::FlatWireToolProjection,
+) -> Vec<agere_openai_chat_client::ToolDefinition> {
+    projection
+        .function_tools()
+        .iter()
+        .filter_map(|tool| {
+            Some(agere_openai_chat_client::ToolDefinition {
+                name: tool.wire_name.clone(),
+                description: tool.description.clone(),
+                parameters: serde_json::to_value(&tool.parameters).ok()?,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn anthropic_tool_definitions_from_function_spec(
+    spec: &agere_tools::ToolSpec,
+) -> Vec<AnthropicToolDef> {
+    anthropic_tool_definitions_from_projection(&agere_tools::FlatWireToolProjection::new(
+        std::slice::from_ref(spec),
+    ))
+}
+
+#[cfg(test)]
+fn chat_tool_definitions_from_function_spec(
+    spec: &agere_tools::ToolSpec,
+) -> Vec<agere_openai_chat_client::ToolDefinition> {
+    chat_tool_definitions_from_projection(&agere_tools::FlatWireToolProjection::new(
+        std::slice::from_ref(spec),
+    ))
+}
+
+fn input_items_for_flat_wire_api(
+    input: &[ResponseItem],
+    projection: &agere_tools::FlatWireToolProjection,
+) -> Vec<ResponseItem> {
+    input
+        .iter()
+        .map(|item| match item {
+            ResponseItem::FunctionCall {
+                id,
+                name,
+                namespace,
+                arguments,
+                call_id,
+            } => {
+                let canonical_name = ToolName::new(namespace.clone(), name.clone());
+                ResponseItem::FunctionCall {
+                    id: id.clone(),
+                    name: projection.wire_name_for_canonical_name(&canonical_name),
+                    namespace: None,
+                    arguments: arguments.clone(),
+                    call_id: call_id.clone(),
+                }
+            }
+            item => item.clone(),
+        })
+        .collect()
 }
 
 impl ModelClientSession {
@@ -1685,19 +1739,19 @@ impl ModelClientSession {
         let client_setup = self.client.current_client_setup().await?;
         let transport = ReqwestTransport::new(build_reqwest_client());
 
+        let tool_projection = agere_tools::FlatWireToolProjection::new(&prompt.tools);
+        let input_items = input_items_for_flat_wire_api(&prompt.input, &tool_projection);
+
         // Build Anthropic messages directly from ResponseItem[] — preserves tool_use/tool_result pairs
         let require_thinking_sig =
             requires_thinking_signature_downgrade(&client_setup.api_provider.base_url);
         let messages = build_anthropic_messages_from_response_items(
-            &prompt.input,
+            &input_items,
             &MessageBuildContext::new().with_require_thinking_signature(require_thinking_sig),
         );
 
-        let tools: Vec<AnthropicToolDef> = prompt
-            .tools
-            .iter()
-            .filter_map(anthropic_tool_definition_from_function_spec)
-            .collect();
+        let tools: Vec<AnthropicToolDef> =
+            anthropic_tool_definitions_from_projection(&tool_projection);
 
         // Map reasoning effort.
         let thinking_effort = effort.map(|e| {
@@ -1769,11 +1823,9 @@ impl ModelClientSession {
         let client_setup = self.client.current_client_setup().await?;
         let transport = ReqwestTransport::new(build_reqwest_client());
 
-        let tools: Vec<agere_openai_chat_client::ToolDefinition> = prompt
-            .tools
-            .iter()
-            .filter_map(chat_tool_definition_from_function_spec)
-            .collect();
+        let tool_projection = agere_tools::FlatWireToolProjection::new(&prompt.tools);
+        let tools: Vec<agere_openai_chat_client::ToolDefinition> =
+            chat_tool_definitions_from_projection(&tool_projection);
 
         let reasoning_effort = effort.map(|e| {
             use agere_protocol::openai_models::ReasoningEffort;
@@ -1788,7 +1840,8 @@ impl ModelClientSession {
             }
         });
 
-        let input_items: Vec<agere_protocol::models::ResponseItem> = prompt.input.clone();
+        let input_items: Vec<agere_protocol::models::ResponseItem> =
+            input_items_for_flat_wire_api(&prompt.input, &tool_projection);
 
         let system = &prompt.base_instructions.text;
         let mut options = default_chat_options();

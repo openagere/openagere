@@ -53,6 +53,13 @@ impl ToolCallRuntime {
         self.router.find_spec(tool_name)
     }
 
+    pub(crate) async fn build_tool_call(
+        &self,
+        item: agere_protocol::models::ResponseItem,
+    ) -> Result<Option<ToolCall>, FunctionCallError> {
+        self.router.build_tool_call(&self.session, item).await
+    }
+
     pub(crate) fn create_diff_consumer(
         &self,
         tool_name: &agere_tools::ToolName,
