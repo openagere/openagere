@@ -1690,6 +1690,7 @@ mod tests {
     use agere_app_server_protocol::ThreadStatus;
     use agere_app_server_protocol::Turn;
     use agere_app_server_protocol::TurnStatus;
+    use agere_app_server_protocol::TurnsPage;
     use agere_protocol::models::ManagedFileSystemPermissions;
     use agere_protocol::permissions::FileSystemAccessEntry;
     use agere_protocol::permissions::FileSystemAccessMode;
@@ -1760,6 +1761,21 @@ mod tests {
 
         assert_eq!(params.model.as_deref(), Some("current-config-model"));
         assert_eq!(params.model_provider, Some(expected_model_provider));
+    }
+
+    #[tokio::test]
+    async fn thread_resume_params_request_complete_history_for_embedded_sessions() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = build_config(&temp_dir).await;
+        let params = thread_resume_params_from_config(
+            config,
+            ThreadId::new(),
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+        );
+
+        assert!(!params.exclude_turns);
+        assert_eq!(params.initial_turns_page, None);
     }
 
     #[tokio::test]
@@ -2012,6 +2028,7 @@ mod tests {
             },
             permission_profile: Some(read_only_profile.into()),
             reasoning_effort: None,
+            initial_turns_page: None,
         };
 
         let started = started_thread_from_resume_response(response.clone(), &config)
@@ -2032,6 +2049,76 @@ mod tests {
         );
         assert_eq!(started.turns.len(), 1);
         assert_eq!(started.turns[0], response.thread.turns[0]);
+    }
+
+    #[tokio::test]
+    async fn resume_response_uses_complete_thread_turns_over_initial_page() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = build_config(&temp_dir).await;
+        let full_turns = vec![
+            Turn {
+                id: "older-turn".to_string(),
+                items: Vec::new(),
+                status: TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            },
+            Turn {
+                id: "newer-turn".to_string(),
+                items: Vec::new(),
+                status: TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            },
+        ];
+        let response = ThreadResumeResponse {
+            thread: agere_app_server_protocol::Thread {
+                id: ThreadId::new().to_string(),
+                forked_from_id: None,
+                preview: "hello".to_string(),
+                ephemeral: false,
+                model_provider: "openai".to_string(),
+                created_at: 1,
+                updated_at: 2,
+                status: ThreadStatus::Idle,
+                path: None,
+                cwd: test_path_buf("/tmp/project").abs(),
+                cli_version: "0.0.1".to_string(),
+                source: agere_protocol::protocol::SessionSource::Cli.into(),
+                agent_nickname: None,
+                agent_role: None,
+                git_info: None,
+                name: None,
+                turns: full_turns.clone(),
+            },
+            model: "gpt-5.4".to_string(),
+            model_provider: "openai".to_string(),
+            service_tier: None,
+            cwd: test_path_buf("/tmp/project").abs(),
+            instruction_sources: Vec::new(),
+            approval_policy: agere_protocol::protocol::AskForApproval::Never.into(),
+            approvals_reviewer: agere_app_server_protocol::ApprovalsReviewer::User,
+            access_policy: agere_app_server_protocol::AccessPolicy::ReadOnly {
+                network_access: false,
+            },
+            permission_profile: Some(PermissionProfile::read_only().into()),
+            reasoning_effort: None,
+            initial_turns_page: Some(TurnsPage {
+                data: vec![full_turns[1].clone()],
+                next_cursor: Some("older".to_string()),
+                backwards_cursor: None,
+            }),
+        };
+
+        let started = started_thread_from_resume_response(response, &config)
+            .await
+            .expect("resume response should map");
+
+        assert_eq!(started.turns, full_turns);
     }
 
     #[tokio::test]

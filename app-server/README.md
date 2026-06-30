@@ -273,7 +273,7 @@ Valid `personality` values are `"friendly"`, `"pragmatic"`, and `"none"`. When `
 
 To continue a stored session, call `thread/resume` with the `thread.id` you previously recorded. The response shape matches `thread/start`. When the stored session includes persisted token usage, the server emits `thread/tokenUsage/updated` immediately after the response so clients can render restored usage before the next turn starts. You can also pass the same configuration overrides supported by `thread/start`, including `approvalsReviewer`.
 
-By default, `thread/resume` includes the reconstructed turn history in `thread.turns`. Pass `excludeTurns: true` to return only thread metadata and live resume state, then call `thread/turns/list` separately if you want to page the turn history over the network. In that mode the server also skips replaying restored `thread/tokenUsage/updated`, which avoids rebuilding turns just to attribute historical usage.
+By default, `thread/resume` includes the reconstructed turn history in `thread.turns`. Pass `excludeTurns: true` to return only thread metadata and live resume state. If you also need the first history page, pass `initialTurnsPage` with the same `limit` and `sortDirection` controls as `thread/turns/list`; the response includes `initialTurnsPage: { data, nextCursor, backwardsCursor }` so clients can hydrate recent turns without a second round trip. When `excludeTurns` is true, the server skips replaying restored `thread/tokenUsage/updated`, which avoids rebuilding turns just to attribute historical usage.
 
 By default, resume uses the latest persisted `model` and `reasoningEffort` values associated with the thread. Supplying any of `model`, `modelProvider`, `config.model`, or `config.model_reasoning_effort` disables that persisted fallback and uses the explicit overrides plus normal config resolution instead.
 
@@ -288,9 +288,10 @@ Example:
 
 { "method": "thread/resume", "id": 12, "params": {
     "threadId": "thr_123",
-    "excludeTurns": true
+    "excludeTurns": true,
+    "initialTurnsPage": { "limit": 50, "sortDirection": "desc" }
 } }
-{ "id": 12, "result": { "thread": { "id": "thr_123", "turns": [], … } } }
+{ "id": 12, "result": { "thread": { "id": "thr_123", "turns": [], … }, "initialTurnsPage": { "data": [ … ], "nextCursor": "…", "backwardsCursor": "…" } } }
 ```
 
 To branch from a stored session, call `thread/fork` with the `thread.id`. This creates a new thread id and emits a `thread/started` notification for it. When the source history includes persisted token usage, the server also emits `thread/tokenUsage/updated` for the new thread immediately after the response. If the source thread is actively running, the fork snapshots it as if the current turn had been interrupted first. Pass `ephemeral: true` when the fork should stay in-memory only:

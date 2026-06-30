@@ -12,6 +12,7 @@ use agere_app_server_protocol::RequestId;
 use agere_app_server_protocol::ServerNotification;
 use agere_app_server_protocol::ServerRequest;
 use agere_app_server_protocol::SessionSource;
+use agere_app_server_protocol::SortDirection;
 use agere_app_server_protocol::ThreadGoalClearResponse;
 use agere_app_server_protocol::ThreadGoalSetResponse;
 use agere_app_server_protocol::ThreadGoalStatus;
@@ -20,11 +21,14 @@ use agere_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use agere_app_server_protocol::ThreadMetadataUpdateParams;
 use agere_app_server_protocol::ThreadReadParams;
 use agere_app_server_protocol::ThreadReadResponse;
+use agere_app_server_protocol::ThreadResumeInitialTurnsPageParams;
 use agere_app_server_protocol::ThreadResumeParams;
 use agere_app_server_protocol::ThreadResumeResponse;
 use agere_app_server_protocol::ThreadStartParams;
 use agere_app_server_protocol::ThreadStartResponse;
 use agere_app_server_protocol::ThreadStatus;
+use agere_app_server_protocol::ThreadTurnsListParams;
+use agere_app_server_protocol::ThreadTurnsListResponse;
 use agere_app_server_protocol::TurnStartParams;
 use agere_app_server_protocol::TurnStartResponse;
 use agere_app_server_protocol::TurnStatus;
@@ -70,6 +74,7 @@ use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::fs::FileTimes;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -383,6 +388,168 @@ async fn thread_resume_can_skip_turns_for_metadata_only_resume() -> Result<()> {
 
     assert_eq!(thread.id, conversation_id);
     assert!(thread.turns.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn thread_resume_initial_turns_page_matches_requested_turns_list_page() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let agere_home = TempDir::new()?;
+    create_config_toml(agere_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let conversation_id = create_fake_rollout_with_text_elements(
+        agere_home.path(),
+        filename_ts,
+        "2025-01-05T12:00:00Z",
+        "first",
+        Vec::new(),
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let rollout_path = rollout_path(agere_home.path(), filename_ts, &conversation_id);
+    append_user_message(rollout_path.as_path(), "2025-01-05T12:01:00Z", "second")?;
+    append_user_message(rollout_path.as_path(), "2025-01-05T12:02:00Z", "third")?;
+
+    let mut mcp = McpProcess::new(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: conversation_id,
+            exclude_turns: true,
+            initial_turns_page: Some(ThreadResumeInitialTurnsPageParams {
+                limit: Some(2),
+                sort_direction: Some(SortDirection::Desc),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse {
+        thread,
+        initial_turns_page,
+        ..
+    } = to_response::<ThreadResumeResponse>(resume_resp)?;
+
+    assert_eq!(thread.turns, Vec::new());
+    let initial_turns_page = initial_turns_page.expect("resume should include initial turns page");
+    assert_eq!(
+        turn_user_texts(&initial_turns_page.data),
+        vec!["third", "second"]
+    );
+    assert!(initial_turns_page.next_cursor.is_some());
+    assert!(initial_turns_page.backwards_cursor.is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn thread_resume_initial_turns_page_uses_history_payload() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let agere_home = TempDir::new()?;
+    create_config_toml(agere_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let conversation_id = create_fake_rollout_with_text_elements(
+        agere_home.path(),
+        filename_ts,
+        "2025-01-05T12:00:00Z",
+        "persisted first",
+        Vec::new(),
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let rollout_path = rollout_path(agere_home.path(), filename_ts, &conversation_id);
+    append_user_message(
+        rollout_path.as_path(),
+        "2025-01-05T12:01:00Z",
+        "persisted second",
+    )?;
+
+    let mut mcp = McpProcess::new(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: conversation_id,
+            history: Some(vec![
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "history first".to_string(),
+                    }],
+                    phase: None,
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "history second".to_string(),
+                    }],
+                    phase: None,
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "history third".to_string(),
+                    }],
+                    phase: None,
+                },
+            ]),
+            exclude_turns: true,
+            initial_turns_page: Some(ThreadResumeInitialTurnsPageParams {
+                limit: Some(1),
+                sort_direction: Some(SortDirection::Desc),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse {
+        thread,
+        initial_turns_page,
+        ..
+    } = to_response::<ThreadResumeResponse>(resume_resp)?;
+
+    assert_eq!(thread.turns, Vec::new());
+    let initial_turns_page = initial_turns_page.expect("resume should include initial turns page");
+    assert_eq!(
+        turn_user_texts(&initial_turns_page.data),
+        vec!["history third"]
+    );
+    let next_cursor = initial_turns_page
+        .next_cursor
+        .expect("initial page should advertise older history");
+
+    let read_id = mcp
+        .send_thread_turns_list_request(ThreadTurnsListParams {
+            thread_id: thread.id,
+            cursor: Some(next_cursor),
+            limit: Some(1),
+            sort_direction: Some(SortDirection::Desc),
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadTurnsListResponse { data, .. } = to_response::<ThreadTurnsListResponse>(read_resp)?;
+    assert_eq!(turn_user_texts(&data), vec!["history second"]);
 
     Ok(())
 }
@@ -1787,6 +1954,53 @@ async fn thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is
     assert_eq!(read_thread.turns[1].id, turn_id);
     assert_eq!(read_thread.turns[1].status, TurnStatus::Interrupted);
 
+    let paged_resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: read_thread.id.clone(),
+            exclude_turns: true,
+            initial_turns_page: Some(ThreadResumeInitialTurnsPageParams {
+                limit: Some(1),
+                sort_direction: Some(SortDirection::Desc),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let paged_resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(paged_resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse {
+        thread: paged_thread,
+        initial_turns_page,
+        ..
+    } = to_response::<ThreadResumeResponse>(paged_resume_resp)?;
+
+    assert_eq!(paged_thread.turns, Vec::new());
+    let initial_turns_page = initial_turns_page.expect("resume should include initial turns page");
+    assert_eq!(initial_turns_page.data.len(), 1);
+    assert_eq!(initial_turns_page.data[0].id, turn_id);
+    assert_eq!(initial_turns_page.data[0].status, TurnStatus::Interrupted);
+
+    let list_id = mcp
+        .send_thread_turns_list_request(ThreadTurnsListParams {
+            thread_id: paged_thread.id,
+            cursor: None,
+            limit: Some(1),
+            sort_direction: Some(SortDirection::Desc),
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadTurnsListResponse { data, .. } = to_response::<ThreadTurnsListResponse>(list_resp)?;
+
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0].id, turn_id);
+    assert_eq!(data[0].status, TurnStatus::Interrupted);
+
     Ok(())
 }
 
@@ -1948,6 +2162,150 @@ async fn thread_resume_keeps_in_flight_turn_streaming() -> Result<()> {
         ..
     } = to_response::<ThreadResumeResponse>(resume_resp)?;
     assert_ne!(resumed_thread.status, ThreadStatus::NotLoaded);
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn thread_resume_initial_turns_page_for_running_thread_pages_persisted_turns() -> Result<()> {
+    let server = responses::start_mock_server().await;
+    let response_sequence = vec![
+        responses::sse_response(responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_assistant_message("msg-1", "Done"),
+            responses::ev_completed("resp-1"),
+        ])),
+        responses::sse_response(responses::sse(vec![
+            responses::ev_response_created("resp-2"),
+            responses::ev_assistant_message("msg-2", "Done"),
+            responses::ev_completed("resp-2"),
+        ])),
+        responses::sse_response(responses::sse(vec![
+            responses::ev_response_created("resp-3"),
+            responses::ev_assistant_message("msg-3", "Done"),
+            responses::ev_completed("resp-3"),
+        ]))
+        .set_delay(std::time::Duration::from_secs(2)),
+    ];
+    let _response_mock = responses::mount_response_sequence(&server, response_sequence).await;
+    let agere_home = TempDir::new()?;
+    create_config_toml(agere_home.path(), &server.uri())?;
+
+    let mut primary = McpProcess::new(agere_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, primary.initialize()).await??;
+
+    let start_id = primary
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("gpt-5.4".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    for text in ["persisted first", "persisted second"] {
+        let seed_turn_id = primary
+            .send_turn_start_request(TurnStartParams {
+                thread_id: thread.id.clone(),
+                input: vec![UserInput::Text {
+                    text: text.to_string(),
+                    text_elements: Vec::new(),
+                }],
+                ..Default::default()
+            })
+            .await?;
+        timeout(
+            DEFAULT_READ_TIMEOUT,
+            primary.read_stream_until_response_message(RequestId::Integer(seed_turn_id)),
+        )
+        .await??;
+        timeout(
+            DEFAULT_READ_TIMEOUT,
+            primary.read_stream_until_notification_message("turn/completed"),
+        )
+        .await??;
+    }
+    primary.clear_message_buffer();
+
+    let running_turn_request_id = primary
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "keep running".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(running_turn_request_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_notification_message("turn/started"),
+    )
+    .await??;
+
+    let resume_id = primary
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: thread.id.clone(),
+            exclude_turns: true,
+            initial_turns_page: Some(ThreadResumeInitialTurnsPageParams {
+                limit: Some(1),
+                sort_direction: Some(SortDirection::Desc),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse {
+        thread: resumed_thread,
+        initial_turns_page,
+        ..
+    } = to_response::<ThreadResumeResponse>(resume_resp)?;
+
+    assert_eq!(resumed_thread.turns, Vec::new());
+    let initial_turns_page = initial_turns_page.expect("resume should include initial turns page");
+    assert_eq!(
+        turn_user_texts(&initial_turns_page.data),
+        vec!["persisted second"]
+    );
+    let next_cursor = initial_turns_page
+        .next_cursor
+        .expect("initial page should advertise older persisted history");
+
+    let list_id = primary
+        .send_thread_turns_list_request(ThreadTurnsListParams {
+            thread_id: resumed_thread.id,
+            cursor: Some(next_cursor),
+            limit: Some(1),
+            sort_direction: Some(SortDirection::Desc),
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadTurnsListResponse { data, .. } = to_response::<ThreadTurnsListResponse>(list_resp)?;
+    assert_eq!(turn_user_texts(&data), vec!["persisted first"]);
 
     timeout(
         DEFAULT_READ_TIMEOUT,
@@ -3364,6 +3722,40 @@ fn set_rollout_mtime(path: &Path, updated_at_rfc3339: &str) -> Result<()> {
         .open(path)?
         .set_times(times)?;
     Ok(())
+}
+
+fn append_user_message(path: &Path, timestamp: &str, text: &str) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "timestamp": timestamp,
+            "type":"event_msg",
+            "payload": {
+                "type":"user_message",
+                "message": text,
+                "text_elements": [],
+                "local_images": []
+            }
+        })
+    )
+}
+
+fn turn_user_texts(turns: &[agere_app_server_protocol::Turn]) -> Vec<&str> {
+    turns
+        .iter()
+        .filter_map(|turn| match turn.items.first()? {
+            ThreadItem::UserMessage { content, .. } => match content.first()? {
+                UserInput::Text { text, .. } => Some(text.as_str()),
+                UserInput::Image { .. }
+                | UserInput::LocalImage { .. }
+                | UserInput::Skill { .. }
+                | UserInput::Mention { .. } => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 struct RolloutFixture {

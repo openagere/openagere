@@ -3653,6 +3653,11 @@ pub struct ThreadResumeParams {
     /// `thread/turns/list` immediately after resuming.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
+    /// When present, include a `thread/turns/list` page in the resume response
+    /// so clients can bootstrap recent turns without a second request.
+    #[experimental("thread/resume.initialTurnsPage")]
+    #[ts(optional = nullable)]
+    pub initial_turns_page: Option<ThreadResumeInitialTurnsPageParams>,
     /// If true, persist additional rollout EventMsg variants required to
     /// reconstruct a richer thread history on subsequent resume/fork/read.
     #[experimental("thread/resume.persistFullHistory")]
@@ -3684,6 +3689,41 @@ pub struct ThreadResumeResponse {
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// `thread/turns/list` page returned when requested by `initialTurnsPage`.
+    #[experimental("thread/resume.initialTurnsPage")]
+    #[serde(default)]
+    pub initial_turns_page: Option<TurnsPage>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadResumeInitialTurnsPageParams {
+    /// Optional turn page size.
+    #[ts(optional = nullable)]
+    pub limit: Option<u32>,
+    /// Optional turn pagination direction; defaults to descending.
+    #[ts(optional = nullable)]
+    pub sort_direction: Option<SortDirection>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnsPage {
+    pub data: Vec<Turn>,
+    pub next_cursor: Option<String>,
+    pub backwards_cursor: Option<String>,
+}
+
+impl From<ThreadTurnsListResponse> for TurnsPage {
+    fn from(response: ThreadTurnsListResponse) -> Self {
+        Self {
+            data: response.data,
+            next_cursor: response.next_cursor,
+            backwards_cursor: response.backwards_cursor,
+        }
+    }
 }
 
 #[derive(

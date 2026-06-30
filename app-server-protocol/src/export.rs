@@ -39,6 +39,8 @@ use ts_rs::TS;
 pub(crate) const GENERATED_TS_HEADER: &str = "// GENERATED CODE! DO NOT MODIFY BY HAND!\n\n";
 const IGNORED_DEFINITIONS: &[&str] = &["Option<()>"];
 const JSON_V1_ALLOWLIST: &[&str] = &["InitializeParams", "InitializeResponse"];
+const EXPERIMENTAL_FIELD_DEPENDENCY_TYPES: &[&str] =
+    &["ThreadResumeInitialTurnsPageParams", "TurnsPage"];
 const SPECIAL_DEFINITIONS: &[&str] = &[
     "ClientNotification",
     "ClientRequest",
@@ -554,6 +556,7 @@ fn experimental_method_types() -> HashSet<String> {
     let mut type_names = HashSet::new();
     collect_experimental_type_names(EXPERIMENTAL_CLIENT_METHOD_PARAM_TYPES, &mut type_names);
     collect_experimental_type_names(EXPERIMENTAL_CLIENT_METHOD_RESPONSE_TYPES, &mut type_names);
+    collect_experimental_type_names(EXPERIMENTAL_FIELD_DEPENDENCY_TYPES, &mut type_names);
     type_names
 }
 
@@ -2350,6 +2353,10 @@ mod tests {
 
         let thread_start_ts = v2::ThreadStartParams::export_to_string()?;
         assert_eq!(thread_start_ts.contains("mockExperimentalField"), true);
+        let thread_resume_params_ts = v2::ThreadResumeParams::export_to_string()?;
+        assert_eq!(thread_resume_params_ts.contains("initialTurnsPage"), true);
+        let thread_resume_response_ts = v2::ThreadResumeResponse::export_to_string()?;
+        assert_eq!(thread_resume_response_ts.contains("initialTurnsPage"), true);
         let command_execution_request_approval_ts =
             v2::CommandExecutionRequestApprovalParams::export_to_string()?;
         assert_eq!(
@@ -2826,6 +2833,18 @@ permissionProfile?: PermissionProfile | null};
         let thread_start_json =
             fs::read_to_string(output_dir.join("v2").join("ThreadStartParams.json"))?;
         assert_eq!(thread_start_json.contains("mockExperimentalField"), false);
+        let thread_resume_params_json =
+            fs::read_to_string(output_dir.join("v2").join("ThreadResumeParams.json"))?;
+        assert_eq!(
+            thread_resume_params_json.contains("initialTurnsPage"),
+            false
+        );
+        let thread_resume_response_json =
+            fs::read_to_string(output_dir.join("v2").join("ThreadResumeResponse.json"))?;
+        assert_eq!(
+            thread_resume_response_json.contains("initialTurnsPage"),
+            false
+        );
         let command_execution_request_approval_json =
             fs::read_to_string(output_dir.join("CommandExecutionRequestApprovalParams.json"))?;
         assert_eq!(
@@ -2843,6 +2862,7 @@ permissionProfile?: PermissionProfile | null};
         let bundle_json =
             fs::read_to_string(output_dir.join("agere_app_server_protocol.schemas.json"))?;
         assert_eq!(bundle_json.contains("mockExperimentalField"), false);
+        assert_eq!(bundle_json.contains("initialTurnsPage"), false);
         assert_eq!(bundle_json.contains("additionalPermissions"), false);
         assert_eq!(bundle_json.contains("MockExperimentalMethodParams"), false);
         assert_eq!(
@@ -2852,6 +2872,7 @@ permissionProfile?: PermissionProfile | null};
         let flat_v2_bundle_json =
             fs::read_to_string(output_dir.join("agere_app_server_protocol.v2.schemas.json"))?;
         assert_eq!(flat_v2_bundle_json.contains("mockExperimentalField"), false);
+        assert_eq!(flat_v2_bundle_json.contains("initialTurnsPage"), false);
         assert_eq!(flat_v2_bundle_json.contains("additionalPermissions"), false);
         assert_eq!(
             flat_v2_bundle_json.contains("MockExperimentalMethodParams"),

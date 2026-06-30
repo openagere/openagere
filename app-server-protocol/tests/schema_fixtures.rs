@@ -1,4 +1,6 @@
+use agere_app_server_protocol::GenerateTsOptions;
 use agere_app_server_protocol::generate_json_with_experimental;
+use agere_app_server_protocol::generate_ts_with_options;
 use agere_app_server_protocol::generate_typescript_schema_fixture_subtree_for_tests;
 use agere_app_server_protocol::read_schema_fixture_subtree;
 use anyhow::Context;
@@ -25,6 +27,76 @@ fn json_schema_fixtures_match_generated() -> Result<()> {
     assert_schema_fixtures_match_generated("json", |output_dir| {
         generate_json_with_experimental(output_dir, /*experimental_api*/ false)
     })
+}
+
+#[test]
+fn experimental_schema_generation_includes_initial_turns_page() -> Result<()> {
+    let temp_dir = tempfile::tempdir().context("create temp dir")?;
+    let typescript_dir = temp_dir.path().join("typescript");
+    generate_ts_with_options(
+        &typescript_dir,
+        None,
+        GenerateTsOptions {
+            experimental_api: true,
+            ..Default::default()
+        },
+    )
+    .context("generate experimental TypeScript schema fixtures")?;
+
+    let thread_resume_params_ts =
+        std::fs::read_to_string(typescript_dir.join("v2").join("ThreadResumeParams.ts"))?;
+    assert!(thread_resume_params_ts.contains("initialTurnsPage"));
+    let thread_resume_response_ts =
+        std::fs::read_to_string(typescript_dir.join("v2").join("ThreadResumeResponse.ts"))?;
+    assert!(thread_resume_response_ts.contains("initialTurnsPage"));
+
+    let json_dir = temp_dir.path().join("json");
+    generate_json_with_experimental(&json_dir, /*experimental_api*/ true)
+        .context("generate experimental JSON schema fixtures")?;
+    let thread_resume_params_json =
+        std::fs::read_to_string(json_dir.join("v2").join("ThreadResumeParams.json"))?;
+    assert!(thread_resume_params_json.contains("initialTurnsPage"));
+    let thread_resume_response_json =
+        std::fs::read_to_string(json_dir.join("v2").join("ThreadResumeResponse.json"))?;
+    assert!(thread_resume_response_json.contains("initialTurnsPage"));
+
+    Ok(())
+}
+
+#[test]
+fn stable_schema_generation_excludes_initial_turns_page_helpers() -> Result<()> {
+    let temp_dir = tempfile::tempdir().context("create temp dir")?;
+    let typescript_dir = temp_dir.path().join("typescript");
+    generate_ts_with_options(
+        &typescript_dir,
+        None,
+        GenerateTsOptions {
+            run_prettier: false,
+            ..Default::default()
+        },
+    )
+    .context("generate stable TypeScript schema fixtures")?;
+
+    let index_ts = std::fs::read_to_string(typescript_dir.join("v2").join("index.ts"))?;
+    assert!(!index_ts.contains("ThreadResumeInitialTurnsPageParams"));
+    assert!(!index_ts.contains("TurnsPage"));
+    assert!(
+        !typescript_dir
+            .join("v2")
+            .join("ThreadResumeInitialTurnsPageParams.ts")
+            .exists()
+    );
+    assert!(!typescript_dir.join("v2").join("TurnsPage.ts").exists());
+
+    let json_dir = temp_dir.path().join("json");
+    generate_json_with_experimental(&json_dir, /*experimental_api*/ false)
+        .context("generate stable JSON schema fixtures")?;
+    let bundle_json =
+        std::fs::read_to_string(json_dir.join("agere_app_server_protocol.schemas.json"))?;
+    assert!(!bundle_json.contains("ThreadResumeInitialTurnsPageParams"));
+    assert!(!bundle_json.contains("TurnsPage"));
+
+    Ok(())
 }
 
 fn assert_schema_fixtures_match_generated(

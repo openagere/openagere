@@ -187,6 +187,7 @@ use agere_app_server_protocol::ThreadRealtimeStartResponse;
 use agere_app_server_protocol::ThreadRealtimeStartTransport;
 use agere_app_server_protocol::ThreadRealtimeStopParams;
 use agere_app_server_protocol::ThreadRealtimeStopResponse;
+use agere_app_server_protocol::ThreadResumeInitialTurnsPageParams;
 use agere_app_server_protocol::ThreadResumeParams;
 use agere_app_server_protocol::ThreadResumeResponse;
 use agere_app_server_protocol::ThreadRollbackParams;
@@ -317,6 +318,7 @@ use agere_protocol::dynamic_tools::DynamicToolSpec as CoreDynamicToolSpec;
 use agere_protocol::error::AgereErr;
 use agere_protocol::error::Result as AgereResult;
 use agere_protocol::items::TurnItem;
+use agere_protocol::models::ContentItem;
 use agere_protocol::models::ResponseItem;
 use agere_protocol::openai_models::ReasoningEffort;
 use agere_protocol::permissions::FileSystemAccessPolicy;
@@ -3977,16 +3979,31 @@ impl AgereMessageProcessor {
         // every request. Rollback and compaction events can change earlier turns, so
         // the server has to rebuild the full turn list until turn metadata is indexed
         // separately.
-        let has_live_in_progress_turn = match self.thread_manager.get_thread(thread_uuid).await {
-            Ok(thread) => matches!(thread.agent_status().await, AgentStatus::Running),
-            Err(_) => false,
+        let active_turn_id = match self.thread_manager.get_thread(thread_uuid).await {
+            Ok(thread) => {
+                let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
+                let active_turn = {
+                    let state = thread_state.lock().await;
+                    state.active_turn_snapshot()
+                };
+                if matches!(thread.agent_status().await, AgentStatus::Running) {
+                    active_turn.map(|turn| turn.id)
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
         };
-        let turns = reconstruct_thread_turns_from_rollout_items(
-            &items,
+        let mut turns = build_thread_turns_with_plain_message_fallback(&items);
+        if let Some(active_turn_id) = active_turn_id.as_deref() {
+            turns.retain(|turn| turn.id != active_turn_id);
+        }
+        normalize_thread_turns_status(
+            &mut turns,
             self.thread_watch_manager
                 .loaded_status_for_thread(&thread_uuid.to_string())
                 .await,
-            has_live_in_progress_turn,
+            /*has_live_in_progress_turn*/ false,
         );
         let page = paginate_thread_turns(
             turns,
@@ -4124,6 +4141,7 @@ impl AgereMessageProcessor {
             developer_instructions,
             personality,
             exclude_turns,
+            initial_turns_page,
             persist_extended_history,
         } = params;
         let include_turns = !exclude_turns;
@@ -4251,7 +4269,7 @@ impl AgereMessageProcessor {
 
                 set_thread_status_and_interrupt_stale_turns(
                     &mut thread,
-                    thread_status,
+                    thread_status.clone(),
                     /*has_live_in_progress_turn*/ false,
                 );
                 let config_snapshot = agere_thread.config_snapshot().await;
@@ -4261,6 +4279,48 @@ impl AgereMessageProcessor {
                 );
                 let permission_profile =
                     thread_response_permission_profile(config_snapshot.permission_profile.clone());
+                let initial_turns_page = if let Some(params) = initial_turns_page {
+                    let ThreadResumeInitialTurnsPageParams {
+                        limit,
+                        sort_direction,
+                    } = params;
+                    // Build from the materialized rollout so returned cursors use
+                    // the same anchors as follow-up thread/turns/list calls.
+                    let response_history_items =
+                        match read_rollout_items_from_rollout(rollout_path.as_path()).await {
+                            Ok(items) => items,
+                            Err(err) => {
+                                let error = internal_error(format!(
+                                    "failed to load rollout `{}` for thread {thread_id}: {err}",
+                                    rollout_path.display()
+                                ));
+                                self.outgoing.send_error(request_id, error).await;
+                                return;
+                            }
+                        };
+                    match build_thread_resume_initial_turns_page_from_rollout_items(
+                        &response_history_items,
+                        thread_status,
+                        /*has_live_in_progress_turn*/ false,
+                        limit,
+                        sort_direction.unwrap_or(SortDirection::Desc),
+                    ) {
+                        Ok(page) => Some(
+                            ThreadTurnsListResponse {
+                                data: page.turns,
+                                next_cursor: page.next_cursor,
+                                backwards_cursor: page.backwards_cursor,
+                            }
+                            .into(),
+                        ),
+                        Err(error) => {
+                            self.outgoing.send_error(request_id, error).await;
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
 
                 let response = ThreadResumeResponse {
                     thread,
@@ -4274,6 +4334,7 @@ impl AgereMessageProcessor {
                     access_policy,
                     permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
+                    initial_turns_page,
                 };
                 self.analytics_events_client.track_response(
                     request_id.connection_id.0,
@@ -4462,6 +4523,7 @@ impl AgereMessageProcessor {
                     emit_thread_goal_update,
                     thread_goal_state_db,
                     include_turns: !params.exclude_turns,
+                    initial_turns_page: params.initial_turns_page.clone(),
                 }),
             );
             if listener_command_tx.send(command).is_err() {
@@ -8123,9 +8185,12 @@ async fn handle_pending_thread_resume_request(
 
     set_thread_status_and_interrupt_stale_turns(
         &mut thread,
-        thread_status,
+        thread_status.clone(),
         has_live_in_progress_turn,
     );
+    if !pending.include_turns {
+        thread.turns.clear();
+    }
 
     {
         let pending_thread_unloads = pending_thread_unloads.lock().await;
@@ -8174,6 +8239,42 @@ async fn handle_pending_thread_resume_request(
     let instruction_sources = pending.instruction_sources;
     let access_policy = thread_response_access_policy(&permission_profile, cwd.as_path());
     let permission_profile = thread_response_permission_profile(permission_profile);
+    let initial_turns_page = pending.initial_turns_page.map(|params| {
+        let ThreadResumeInitialTurnsPageParams {
+            limit,
+            sort_direction,
+        } = params;
+        let mut turns = build_thread_turns_with_plain_message_fallback(&pending.history_items);
+        if let Some(active_turn) = active_turn.as_ref() {
+            turns.retain(|turn| turn.id != active_turn.id);
+        }
+        normalize_thread_turns_status(
+            &mut turns,
+            thread_status,
+            /*has_live_in_progress_turn*/ false,
+        );
+        let page = paginate_thread_turns(
+            turns,
+            None,
+            limit,
+            sort_direction.unwrap_or(SortDirection::Desc),
+        );
+        page.map(|page| {
+            ThreadTurnsListResponse {
+                data: page.turns,
+                next_cursor: page.next_cursor,
+                backwards_cursor: page.backwards_cursor,
+            }
+            .into()
+        })
+    });
+    let initial_turns_page = match initial_turns_page.transpose() {
+        Ok(page) => page,
+        Err(error) => {
+            outgoing.send_error(request_id, error).await;
+            return;
+        }
+    };
 
     let response = ThreadResumeResponse {
         thread,
@@ -8187,6 +8288,7 @@ async fn handle_pending_thread_resume_request(
         access_policy,
         permission_profile,
         reasoning_effort,
+        initial_turns_page,
     };
     let token_usage_thread = pending.include_turns.then(|| response.thread.clone());
     outgoing.send_response(request_id, response).await;
@@ -8276,7 +8378,9 @@ async fn populate_thread_turns(
     active_turn: Option<&Turn>,
 ) -> std::result::Result<(), String> {
     let mut turns = match turn_source {
-        ThreadTurnSource::HistoryItems(items) => build_turns_from_rollout_items(items),
+        ThreadTurnSource::HistoryItems(items) => {
+            build_thread_turns_with_plain_message_fallback(items)
+        }
     };
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn.clone());
@@ -9633,14 +9737,75 @@ fn parse_thread_turns_cursor(cursor: &str) -> Result<ThreadTurnsCursor, JSONRPCE
     })
 }
 
+#[cfg(test)]
 fn reconstruct_thread_turns_from_rollout_items(
     items: &[RolloutItem],
     loaded_status: ThreadStatus,
     has_live_in_progress_turn: bool,
 ) -> Vec<Turn> {
-    let mut turns = build_turns_from_rollout_items(items);
+    let mut turns = build_thread_turns_with_plain_message_fallback(items);
     normalize_thread_turns_status(&mut turns, loaded_status, has_live_in_progress_turn);
     turns
+}
+
+fn build_thread_turns_with_plain_message_fallback(items: &[RolloutItem]) -> Vec<Turn> {
+    let turns = build_turns_from_rollout_items(items);
+    if !turns.is_empty() {
+        return turns;
+    }
+
+    let mut next_item_index: usize = 1;
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let RolloutItem::ResponseItem(ResponseItem::Message { role, content, .. }) = item
+            else {
+                return None;
+            };
+            if role != "user" || content.is_empty() {
+                return None;
+            }
+            let item_index = next_item_index;
+            next_item_index = next_item_index.saturating_add(1);
+            Some(Turn {
+                id: format!("rollout-{index}"),
+                items: vec![ThreadItem::UserMessage {
+                    id: format!("item-{item_index}"),
+                    content: content
+                        .iter()
+                        .filter_map(|item| match item {
+                            ContentItem::InputText { text } => Some(V2UserInput::Text {
+                                text: text.clone(),
+                                text_elements: Vec::new(),
+                            }),
+                            ContentItem::InputImage { image_url, .. } => Some(V2UserInput::Image {
+                                url: image_url.clone(),
+                            }),
+                            ContentItem::OutputText { .. } => None,
+                        })
+                        .collect(),
+                }],
+                status: TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            })
+        })
+        .collect()
+}
+
+fn build_thread_resume_initial_turns_page_from_rollout_items(
+    items: &[RolloutItem],
+    loaded_status: ThreadStatus,
+    has_live_in_progress_turn: bool,
+    limit: Option<u32>,
+    sort_direction: SortDirection,
+) -> Result<ThreadTurnsPage, JSONRPCErrorError> {
+    let mut turns = build_thread_turns_with_plain_message_fallback(items);
+    normalize_thread_turns_status(&mut turns, loaded_status, has_live_in_progress_turn);
+    paginate_thread_turns(turns, None, limit, sort_direction)
 }
 
 fn normalize_thread_turns_status(
@@ -10241,6 +10406,7 @@ mod tests {
             developer_instructions: None,
             personality: None,
             exclude_turns: false,
+            initial_turns_page: None,
             persist_extended_history: false,
         };
         let config_snapshot = ThreadConfigSnapshot {
@@ -10262,6 +10428,212 @@ mod tests {
             collect_resume_override_mismatches(&request, &config_snapshot),
             vec!["service_tier requested=Some(Fast) active=Some(Flex)".to_string()]
         );
+    }
+
+    #[test]
+    fn resume_initial_turns_page_uses_normalized_stale_turn_status() -> Result<()> {
+        let mut thread = Thread {
+            id: ThreadId::new().to_string(),
+            forked_from_id: None,
+            preview: String::new(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            status: ThreadStatus::Active {
+                active_flags: Vec::new(),
+            },
+            path: None,
+            cwd: test_path_buf("/tmp/project").abs(),
+            cli_version: "0.0.1".to_string(),
+            source: SessionSource::Cli.into(),
+            agent_nickname: None,
+            agent_role: None,
+            git_info: None,
+            name: None,
+            turns: vec![Turn {
+                id: "stale-turn".to_string(),
+                items: Vec::new(),
+                status: TurnStatus::InProgress,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            }],
+        };
+
+        set_thread_status_and_interrupt_stale_turns(
+            &mut thread,
+            ThreadStatus::Idle,
+            /*has_live_in_progress_turn*/ false,
+        );
+        let page = paginate_thread_turns(thread.turns.clone(), None, None, SortDirection::Desc)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+
+        assert_eq!(thread.turns[0].status, TurnStatus::Interrupted);
+        assert_eq!(page.turns[0].status, TurnStatus::Interrupted);
+        Ok(())
+    }
+
+    #[test]
+    fn resume_initial_turns_page_plain_history_uses_deterministic_ids() -> Result<()> {
+        let items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "first".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "second".to_string(),
+                }],
+                phase: None,
+            }),
+        ];
+
+        let first_page = build_thread_resume_initial_turns_page_from_rollout_items(
+            &items,
+            ThreadStatus::Idle,
+            /*has_live_in_progress_turn*/ false,
+            Some(1),
+            SortDirection::Desc,
+        )
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+        let second_page = build_thread_resume_initial_turns_page_from_rollout_items(
+            &items,
+            ThreadStatus::Idle,
+            /*has_live_in_progress_turn*/ false,
+            Some(1),
+            SortDirection::Desc,
+        )
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+
+        assert_eq!(first_page.turns, second_page.turns);
+        assert_eq!(first_page.next_cursor, second_page.next_cursor);
+        assert_eq!(first_page.backwards_cursor, second_page.backwards_cursor);
+        assert_eq!(first_page.turns.len(), 1);
+        assert_eq!(first_page.turns[0].id, "rollout-1");
+        assert_eq!(
+            first_page.turns[0].items,
+            vec![ThreadItem::UserMessage {
+                id: "item-2".to_string(),
+                content: vec![V2UserInput::Text {
+                    text: "second".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            }]
+        );
+        assert_eq!(
+            first_page.next_cursor,
+            Some(
+                serialize_thread_turns_cursor("rollout-1", /*include_anchor*/ false)
+                    .map_err(|error| anyhow::anyhow!(error.message))?
+            )
+        );
+        assert_eq!(
+            first_page.backwards_cursor,
+            Some(
+                serialize_thread_turns_cursor("rollout-1", /*include_anchor*/ true)
+                    .map_err(|error| anyhow::anyhow!(error.message))?
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn resume_initial_turns_page_cursor_matches_turns_list_reconstruction() -> Result<()> {
+        let items = vec![
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "first".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "second".to_string(),
+                }],
+                phase: None,
+            }),
+            RolloutItem::ResponseItem(ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "third".to_string(),
+                }],
+                phase: None,
+            }),
+        ];
+
+        let initial_page = build_thread_resume_initial_turns_page_from_rollout_items(
+            &items,
+            ThreadStatus::Idle,
+            /*has_live_in_progress_turn*/ false,
+            Some(1),
+            SortDirection::Desc,
+        )
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+        let turns = reconstruct_thread_turns_from_rollout_items(
+            &items,
+            ThreadStatus::Idle,
+            /*has_live_in_progress_turn*/ false,
+        );
+        let continued_page = paginate_thread_turns(
+            turns,
+            initial_page.next_cursor.as_deref(),
+            Some(1),
+            SortDirection::Desc,
+        )
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+
+        assert_eq!(
+            initial_page.turns,
+            vec![Turn {
+                id: "rollout-2".to_string(),
+                items: vec![ThreadItem::UserMessage {
+                    id: "item-3".to_string(),
+                    content: vec![V2UserInput::Text {
+                        text: "third".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                }],
+                status: TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            }]
+        );
+        assert_eq!(
+            continued_page.turns,
+            vec![Turn {
+                id: "rollout-1".to_string(),
+                items: vec![ThreadItem::UserMessage {
+                    id: "item-2".to_string(),
+                    content: vec![V2UserInput::Text {
+                        text: "second".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                }],
+                status: TurnStatus::Completed,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                duration_ms: None,
+            }]
+        );
+
+        Ok(())
     }
 
     fn test_thread_metadata(

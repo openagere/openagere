@@ -48,10 +48,11 @@ fn sanitize_history_for_wire_api_in_context<'a>(
         ResponseItem::Reasoning {
             encrypted_content,
             signature,
+            content,
             ..
         } => match wire_api {
             WireApi::Chat => encrypted_content.is_some() || signature.is_some(),
-            WireApi::Responses => signature.is_some(),
+            WireApi::Responses => signature.is_some() || has_raw_reasoning_content(content),
             WireApi::Anthropic => match context {
                 HistorySanitizeContext::CurrentProvider => false,
                 HistorySanitizeContext::ProviderSwitch => signature.is_none(),
@@ -107,10 +108,14 @@ fn sanitize_history_for_wire_api_in_context<'a>(
                         }
                         WireApi::Anthropic => (encrypted_content.clone(), signature.clone()),
                     };
+                    let content = match wire_api {
+                        WireApi::Responses if has_raw_reasoning_content(content) => None,
+                        WireApi::Chat | WireApi::Responses | WireApi::Anthropic => content.clone(),
+                    };
                     ResponseItem::Reasoning {
                         id: id.clone(),
                         summary: summary.clone(),
-                        content: content.clone(),
+                        content,
                         encrypted_content,
                         signature,
                     }
@@ -127,6 +132,14 @@ fn sanitize_history_for_wire_api_in_context<'a>(
         );
     }
     Cow::Owned(out)
+}
+
+fn has_raw_reasoning_content(content: &Option<Vec<ReasoningItemContent>>) -> bool {
+    content.as_ref().is_some_and(|content| {
+        content
+            .iter()
+            .any(|item| matches!(item, ReasoningItemContent::ReasoningText { .. }))
+    })
 }
 
 fn reasoning_text(
@@ -159,6 +172,7 @@ mod tests {
     use super::sanitize_history_for_wire_api;
     use agere_model_provider_info::WireApi;
     use agere_protocol::models::ContentItem;
+    use agere_protocol::models::ReasoningItemContent;
     use agere_protocol::models::ReasoningItemReasoningSummary;
     use agere_protocol::models::ResponseItem;
 
@@ -223,6 +237,32 @@ mod tests {
             }
             _ => panic!("expected reasoning"),
         }
+    }
+
+    #[test]
+    fn responses_strips_reasoning_text_content() {
+        let items = vec![ResponseItem::Reasoning {
+            id: "reasoning-1".to_string(),
+            summary: vec![ReasoningItemReasoningSummary::SummaryText { text: "s".into() }],
+            content: Some(vec![ReasoningItemContent::ReasoningText {
+                text: "raw reasoning".to_string(),
+            }]),
+            encrypted_content: None,
+            signature: None,
+        }];
+
+        let out = sanitize_history_for_wire_api(WireApi::Responses, &items);
+
+        assert_eq!(
+            out.as_ref(),
+            &[ResponseItem::Reasoning {
+                id: "reasoning-1".to_string(),
+                summary: vec![ReasoningItemReasoningSummary::SummaryText { text: "s".into() }],
+                content: None,
+                encrypted_content: None,
+                signature: None,
+            }]
+        );
     }
 
     #[test]

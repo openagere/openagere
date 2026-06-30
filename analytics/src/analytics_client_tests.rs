@@ -211,6 +211,7 @@ fn sample_thread_resume_response_with_source(
             access_policy: AccessPolicy::DangerFullAccess,
             permission_profile: Some(sample_permission_profile()),
             reasoning_effort: None,
+            initial_turns_page: None,
         },
     }
 }
