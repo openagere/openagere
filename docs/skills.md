@@ -15,6 +15,7 @@ OpenAgere ships with core skills for common workflows:
 - **plugin-creator** — Scaffold plugin directories
 - **skill-creator** — Create and update custom skills
 - **skill-installer** — Install skills from curated lists or GitHub repos
+- **mcp-creator** — Configure MCP servers
 - **imagegen** — Generate or edit raster images
 
 ## Installing skills

@@ -1,0 +1,3 @@
+interface:
+  display_name: "MCP Creator"
+  short_description: "Configure MCP servers"
