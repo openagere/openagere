@@ -154,6 +154,7 @@ pub use utility_tool::create_test_sync_tool;
 pub use view_image::ViewImageToolOptions;
 pub use view_image::create_view_image_tool;
 pub use wire_projection::FlatWireFunctionTool;
+pub use wire_projection::FlatWireFunctionToolKind;
 pub use wire_projection::FlatWireToolProjection;
 pub use wire_projection::project_function_tools_for_flat_wire_api;
 pub use wire_projection::resolve_flattened_tool_name;

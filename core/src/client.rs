@@ -82,6 +82,8 @@ use agere_protocol::ThreadId;
 use agere_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use agere_protocol::config_types::ServiceTier;
 use agere_protocol::config_types::Verbosity as VerbosityConfig;
+use agere_protocol::models::FunctionCallOutputBody;
+use agere_protocol::models::FunctionCallOutputPayload;
 use agere_protocol::models::ResponseItem;
 use agere_protocol::openai_models::ModelInfo;
 use agere_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -92,6 +94,7 @@ use agere_protocol::protocol::W3cTraceContext;
 use agere_rollout_trace::CompactionTraceContext;
 use agere_rollout_trace::InferenceTraceAttempt;
 use agere_rollout_trace::InferenceTraceContext;
+use agere_tools::FlatWireFunctionToolKind;
 use agere_tools::ToolName;
 use agere_tools::create_tools_json_for_responses_api;
 use eventsource_stream::Event;
@@ -492,7 +495,10 @@ impl ModelClient {
         let instructions = prompt.base_instructions.text.clone();
         let input = prompt.get_formatted_input();
         let sanitized_input = self.sanitize_prompt_input_for_current_provider(&input);
-        let tools = create_tools_json_for_responses_api(&prompt.tools)?;
+        let namespace_tools = self.provider().capabilities().namespace_tools;
+        let input =
+            input_items_for_responses_provider(&sanitized_input, &prompt.tools, namespace_tools);
+        let tools = responses_tools_json_for_provider(&prompt.tools, namespace_tools)?;
         let reasoning = Self::build_reasoning(model_info, effort, summary);
         let verbosity = if model_info.support_verbosity {
             self.state.model_verbosity.or(model_info.default_verbosity)
@@ -512,7 +518,7 @@ impl ModelClient {
         );
         let payload = ApiCompactionInput {
             model: &model_info.slug,
-            input: &sanitized_input,
+            input: &input,
             instructions: &instructions,
             tools,
             parallel_tool_calls: prompt.parallel_tool_calls,
@@ -928,6 +934,58 @@ fn chat_tool_definitions_from_projection(
         .collect()
 }
 
+fn responses_tools_json_for_provider(
+    specs: &[agere_tools::ToolSpec],
+    namespace_tools: bool,
+) -> Result<Vec<serde_json::Value>> {
+    if namespace_tools {
+        return Ok(create_tools_json_for_responses_api(specs)?);
+    }
+
+    let projection = agere_tools::FlatWireToolProjection::new(specs);
+    let mut projected_specs = Vec::new();
+    for spec in specs {
+        match spec {
+            agere_tools::ToolSpec::Function(tool) => {
+                let mut tool = tool.clone();
+                tool.name = projection.wire_name_for_function_tool(&ToolName::plain(&tool.name));
+                projected_specs.push(agere_tools::ToolSpec::Function(tool));
+            }
+            agere_tools::ToolSpec::Namespace(namespace) => {
+                projected_specs.extend(namespace.tools.iter().map(|tool| match tool {
+                    agere_tools::ResponsesApiNamespaceTool::Function(tool) => {
+                        let mut tool = tool.clone();
+                        tool.name = projection.wire_name_for_function_tool(&ToolName::namespaced(
+                            namespace.name.clone(),
+                            tool.name.clone(),
+                        ));
+                        agere_tools::ToolSpec::Function(tool)
+                    }
+                }));
+            }
+            agere_tools::ToolSpec::ToolSearch {
+                description,
+                parameters,
+                ..
+            } => projected_specs.push(agere_tools::ToolSpec::Function(
+                agere_tools::ResponsesApiTool {
+                    name: projection.wire_name_for_tool_search(),
+                    description: description.clone(),
+                    strict: false,
+                    defer_loading: None,
+                    parameters: parameters.clone(),
+                    output_schema: None,
+                },
+            )),
+            agere_tools::ToolSpec::LocalShell {}
+            | agere_tools::ToolSpec::ImageGeneration { .. }
+            | agere_tools::ToolSpec::WebSearch { .. }
+            | agere_tools::ToolSpec::Freeform(_) => projected_specs.push(spec.clone()),
+        }
+    }
+    Ok(create_tools_json_for_responses_api(&projected_specs)?)
+}
+
 #[cfg(test)]
 fn anthropic_tool_definitions_from_function_spec(
     spec: &agere_tools::ToolSpec,
@@ -963,10 +1021,131 @@ fn input_items_for_flat_wire_api(
                 let canonical_name = ToolName::new(namespace.clone(), name.clone());
                 ResponseItem::FunctionCall {
                     id: id.clone(),
-                    name: projection.wire_name_for_canonical_name(&canonical_name),
+                    name: projection.wire_name_for_function_tool(&canonical_name),
                     namespace: None,
                     arguments: arguments.clone(),
                     call_id: call_id.clone(),
+                }
+            }
+            ResponseItem::ToolSearchCall {
+                call_id: Some(call_id),
+                execution,
+                arguments,
+                ..
+            } if execution == "client" => ResponseItem::FunctionCall {
+                id: None,
+                name: projection.wire_name_for_tool_search(),
+                namespace: None,
+                arguments: serde_json::to_string(arguments).unwrap_or_default(),
+                call_id: call_id.clone(),
+            },
+            ResponseItem::ToolSearchOutput {
+                call_id: Some(call_id),
+                execution,
+                tools,
+                ..
+            } if execution == "client" => ResponseItem::FunctionCallOutput {
+                call_id: call_id.clone(),
+                output: FunctionCallOutputPayload {
+                    body: FunctionCallOutputBody::Text(
+                        serde_json::to_string(tools).unwrap_or_default(),
+                    ),
+                    success: Some(true),
+                },
+            },
+            item => item.clone(),
+        })
+        .collect()
+}
+
+fn input_items_for_responses_provider(
+    input: &[ResponseItem],
+    specs: &[agere_tools::ToolSpec],
+    namespace_tools: bool,
+) -> Vec<ResponseItem> {
+    let projection = agere_tools::FlatWireToolProjection::new(specs);
+    if namespace_tools {
+        return input_items_for_namespace_responses_api(input, &projection);
+    }
+
+    input_items_for_flat_wire_api(input, &projection)
+}
+
+fn input_items_for_namespace_responses_api(
+    input: &[ResponseItem],
+    projection: &agere_tools::FlatWireToolProjection,
+) -> Vec<ResponseItem> {
+    let flat_tool_search_call_ids = input
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::FunctionCall {
+                name,
+                namespace: None,
+                call_id,
+                ..
+            } if projection.source_kind_for_wire_name(name)
+                == Some(FlatWireFunctionToolKind::ToolSearch) =>
+            {
+                Some(call_id.clone())
+            }
+            _ => None,
+        })
+        .collect::<std::collections::HashSet<_>>();
+
+    input
+        .iter()
+        .map(|item| match item {
+            ResponseItem::FunctionCall {
+                id,
+                name,
+                namespace: None,
+                arguments,
+                call_id,
+            } => match projection.source_kind_for_wire_name(name) {
+                Some(FlatWireFunctionToolKind::NamespaceFunction) => {
+                    let canonical_name = projection.canonical_name_for_wire_name(name);
+                    if let Some(namespace) = canonical_name.namespace {
+                        ResponseItem::FunctionCall {
+                            id: id.clone(),
+                            name: canonical_name.name,
+                            namespace: Some(namespace),
+                            arguments: arguments.clone(),
+                            call_id: call_id.clone(),
+                        }
+                    } else {
+                        item.clone()
+                    }
+                }
+                Some(FlatWireFunctionToolKind::ToolSearch) => {
+                    if let Ok(arguments) = serde_json::from_str(arguments) {
+                        ResponseItem::ToolSearchCall {
+                            id: id.clone(),
+                            call_id: Some(call_id.clone()),
+                            status: Some("completed".to_string()),
+                            execution: "client".to_string(),
+                            arguments,
+                        }
+                    } else {
+                        item.clone()
+                    }
+                }
+                Some(FlatWireFunctionToolKind::Function) | None => item.clone(),
+            },
+            ResponseItem::FunctionCallOutput { call_id, output }
+                if flat_tool_search_call_ids.contains(call_id) =>
+            {
+                if let Some(tools) = output
+                    .text_content()
+                    .and_then(|text| serde_json::from_str::<Vec<serde_json::Value>>(text).ok())
+                {
+                    ResponseItem::ToolSearchOutput {
+                        call_id: Some(call_id.clone()),
+                        status: "completed".to_string(),
+                        execution: "client".to_string(),
+                        tools,
+                    }
+                } else {
+                    item.clone()
                 }
             }
             item => item.clone(),
@@ -1056,7 +1235,9 @@ impl ModelClientSession {
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
-        let tools = create_tools_json_for_responses_api(&prompt.tools)?;
+        let namespace_tools = self.client.provider().capabilities().namespace_tools;
+        let input = input_items_for_responses_provider(&input, &prompt.tools, namespace_tools);
+        let tools = responses_tools_json_for_provider(&prompt.tools, namespace_tools)?;
         let default_reasoning_effort = model_info.default_reasoning_level;
         let reasoning = if model_info.supports_reasoning_summaries {
             Some(Reasoning {

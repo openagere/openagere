@@ -1111,7 +1111,7 @@ fn test_build_specs_mcp_tools_converted() {
 }
 
 #[test]
-fn namespace_specs_are_hidden_when_namespace_tools_are_disabled() {
+fn namespace_specs_are_retained_when_namespace_tools_are_disabled_for_flat_wire_projection() {
     let model_info = model_info();
     let features = Features::with_defaults();
     let available_models = Vec::new();
@@ -1137,7 +1137,7 @@ fn namespace_specs_are_hidden_when_namespace_tools_are_disabled() {
         &[],
     );
 
-    assert_lacks_tool_name(&tools, "mcp__sample__");
+    assert_contains_tool_names(&tools, &["mcp__sample__"]);
     assert!(handlers.contains(&ToolHandlerSpec {
         name: ToolName::namespaced("mcp__sample__", "echo"),
         kind: ToolHandlerKind::Mcp,
@@ -1145,7 +1145,8 @@ fn namespace_specs_are_hidden_when_namespace_tools_are_disabled() {
 }
 
 #[test]
-fn namespaced_dynamic_specs_are_hidden_when_namespace_tools_are_disabled() {
+fn namespaced_dynamic_specs_are_retained_when_namespace_tools_are_disabled_for_flat_wire_projection()
+ {
     let model_info = model_info();
     let features = Features::with_defaults();
     let available_models = Vec::new();
@@ -1184,8 +1185,11 @@ fn namespaced_dynamic_specs_are_hidden_when_namespace_tools_are_disabled() {
         &dynamic_tools,
     );
 
-    assert_lacks_tool_name(&tools, "agere_app");
-    assert_contains_tool_names(&tools, &["plain_dynamic"]);
+    assert_contains_tool_names(&tools, &["agere_app", "plain_dynamic"]);
+    assert_eq!(
+        namespace_function_names(&tools, "agere_app"),
+        vec!["automation_update".to_string()]
+    );
 }
 
 #[test]
@@ -1444,7 +1448,7 @@ fn search_tool_requires_model_capability_and_enabled_feature() {
 }
 
 #[test]
-fn search_tool_is_hidden_when_only_deferred_namespace_tools_are_available() {
+fn search_tool_is_available_when_only_deferred_namespace_tools_are_available() {
     let model_info = search_capable_model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::ToolSearch);
@@ -1474,8 +1478,8 @@ fn search_tool_is_hidden_when_only_deferred_namespace_tools_are_available() {
         &[],
     );
 
-    assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
-    assert!(!handlers.contains(&ToolHandlerSpec {
+    assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME]);
+    assert!(handlers.contains(&ToolHandlerSpec {
         name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
         kind: ToolHandlerKind::ToolSearch,
     }));
@@ -1568,7 +1572,7 @@ fn search_tool_registers_for_deferred_dynamic_tools() {
 }
 
 #[test]
-fn search_tool_keeps_plain_deferred_dynamic_tools_when_namespace_tools_are_disabled() {
+fn search_tool_keeps_deferred_dynamic_tools_when_namespace_tools_are_disabled() {
     let model_info = search_capable_model_info();
     let mut features = Features::with_defaults();
     features.enable(Feature::ToolSearch);
@@ -1609,7 +1613,6 @@ fn search_tool_keeps_plain_deferred_dynamic_tools_when_namespace_tools_are_disab
     );
 
     assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME, "plain_dynamic"]);
-    assert_lacks_tool_name(&tools, "agere_app");
     assert!(handlers.contains(&ToolHandlerSpec {
         name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
         kind: ToolHandlerKind::ToolSearch,

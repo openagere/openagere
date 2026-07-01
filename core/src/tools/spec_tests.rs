@@ -459,6 +459,7 @@ async fn assert_model_tools(
             parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: &[],
+            loaded_search_tool_specs: Vec::new(),
         },
     );
     let model_visible_specs = router.model_visible_specs();
@@ -1111,7 +1112,7 @@ async fn search_tool_registers_namespaced_mcp_tool_aliases() {
 }
 
 #[tokio::test]
-async fn tool_search_entries_skip_namespace_outputs_when_namespace_tools_are_disabled() {
+async fn tool_search_entries_keep_namespace_outputs_when_namespace_tools_are_disabled() {
     let model_info = search_capable_model_info().await;
     let mut features = Features::with_defaults();
     features.enable(Feature::ToolSearch);
@@ -1159,11 +1160,19 @@ async fn tool_search_entries_skip_namespace_outputs_when_namespace_tools_are_dis
         .map(|entry| entry.output)
         .collect::<Vec<_>>();
 
-    assert_eq!(outputs.len(), 1);
-    match &outputs[0] {
-        LoadableToolSpec::Function(tool) => assert_eq!(tool.name, "plain_dynamic"),
-        LoadableToolSpec::Namespace(_) => panic!("namespace tool_search output should be hidden"),
-    }
+    assert_eq!(outputs.len(), 3);
+    assert!(outputs.iter().any(|output| match output {
+        LoadableToolSpec::Function(tool) => tool.name == "plain_dynamic",
+        LoadableToolSpec::Namespace(_) => false,
+    }));
+    assert!(outputs.iter().any(|output| match output {
+        LoadableToolSpec::Namespace(namespace) => namespace.name == "mcp__test_server__",
+        LoadableToolSpec::Function(_) => false,
+    }));
+    assert!(outputs.iter().any(|output| match output {
+        LoadableToolSpec::Namespace(namespace) => namespace.name == "agere_app",
+        LoadableToolSpec::Function(_) => false,
+    }));
 }
 
 #[tokio::test]

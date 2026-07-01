@@ -55,6 +55,8 @@ use crate::stream_events_utils::raw_assistant_output_text_from_item;
 use crate::stream_events_utils::record_completed_response_item;
 use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
+use crate::tools::loaded_search_tools::LoadedSearchToolSource;
+use crate::tools::loaded_search_tools::collect_loaded_search_tool_specs;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::router::ToolRouterParams;
@@ -1373,6 +1375,13 @@ pub(crate) async fn built_tools(
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: collect_loaded_search_tool_specs(
+                input,
+                &[
+                    LoadedSearchToolSource::ToolSearchOutputs,
+                    LoadedSearchToolSource::FlatToolSearchFunctionOutputs,
+                ],
+            ),
         },
     )))
 }

@@ -42,6 +42,7 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: Vec::new(),
         },
     );
 
@@ -157,6 +158,312 @@ async fn build_tool_call_resolves_flattened_namespace_function_name() -> anyhow:
 }
 
 #[tokio::test]
+async fn build_tool_call_routes_flat_tool_search_function_call() -> anyhow::Result<()> {
+    let (session, _) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let router = ToolRouter {
+        registry: ToolRegistry::empty_for_test(),
+        specs: Vec::new(),
+        model_visible_specs: vec![ToolSpec::ToolSearch {
+            execution: "client".to_string(),
+            description: "Search deferred tools".to_string(),
+            parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+        }],
+        parallel_mcp_server_names: HashSet::new(),
+    };
+
+    let call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "tool_search".to_string(),
+                namespace: None,
+                arguments: r#"{"query":"calendar","limit":8}"#.to_string(),
+                call_id: "call-tool-search".to_string(),
+            },
+        )
+        .await?
+        .expect("tool_search function_call should produce a tool call");
+
+    assert_eq!(call.tool_name, ToolName::plain("tool_search"));
+    assert_eq!(call.call_id, "call-tool-search");
+    match call.payload {
+        ToolPayload::ToolSearch { arguments } => {
+            assert_eq!(arguments.query, "calendar");
+            assert_eq!(arguments.limit, Some(8));
+        }
+        other => panic!("expected tool_search payload, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_tool_call_treats_plain_tool_search_function_as_normal_tool() -> anyhow::Result<()> {
+    let (session, _) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let router = ToolRouter {
+        registry: ToolRegistry::empty_for_test(),
+        specs: Vec::new(),
+        model_visible_specs: vec![ToolSpec::Function(ResponsesApiTool {
+            name: "tool_search".to_string(),
+            description: "Plain dynamic tool named tool_search".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+            output_schema: None,
+        })],
+        parallel_mcp_server_names: HashSet::new(),
+    };
+
+    let call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "tool_search".to_string(),
+                namespace: None,
+                arguments: r#"{"custom":true}"#.to_string(),
+                call_id: "call-plain-tool-search".to_string(),
+            },
+        )
+        .await?
+        .expect("plain function_call should produce a tool call");
+
+    assert_eq!(call.tool_name, ToolName::plain("tool_search"));
+    assert_eq!(call.call_id, "call-plain-tool-search");
+    match call.payload {
+        ToolPayload::Function { arguments } => {
+            assert_eq!(arguments, r#"{"custom":true}"#);
+        }
+        other => panic!("expected function payload, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_tool_call_disambiguates_plain_tool_search_from_builtin_search() -> anyhow::Result<()>
+{
+    let (session, _) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let specs = vec![
+        ToolSpec::Function(ResponsesApiTool {
+            name: "tool_search".to_string(),
+            description: "Plain dynamic tool named tool_search".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+            output_schema: None,
+        }),
+        ToolSpec::ToolSearch {
+            execution: "client".to_string(),
+            description: "Search deferred tools".to_string(),
+            parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+        },
+    ];
+    let projection = agere_tools::FlatWireToolProjection::new(&specs);
+    let plain_wire_name = projection.wire_name_for_function_tool(&ToolName::plain("tool_search"));
+    let search_wire_name = projection.wire_name_for_tool_search();
+    let router = ToolRouter {
+        registry: ToolRegistry::empty_for_test(),
+        specs: Vec::new(),
+        model_visible_specs: specs,
+        parallel_mcp_server_names: HashSet::new(),
+    };
+
+    let plain_call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: plain_wire_name,
+                namespace: None,
+                arguments: r#"{"custom":true}"#.to_string(),
+                call_id: "call-plain-tool-search".to_string(),
+            },
+        )
+        .await?
+        .expect("plain function_call should produce a tool call");
+    let search_call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: search_wire_name,
+                namespace: None,
+                arguments: r#"{"query":"calendar","limit":8}"#.to_string(),
+                call_id: "call-builtin-tool-search".to_string(),
+            },
+        )
+        .await?
+        .expect("built-in tool_search function_call should produce a tool call");
+
+    assert!(matches!(
+        plain_call.payload,
+        ToolPayload::Function { arguments } if arguments == r#"{"custom":true}"#
+    ));
+    assert!(matches!(
+        search_call.payload,
+        ToolPayload::ToolSearch { arguments }
+            if arguments.query == "calendar" && arguments.limit == Some(8)
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn loaded_search_namespace_tools_are_visible_and_route_from_flat_names() -> anyhow::Result<()>
+{
+    let (session, turn) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let router = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: vec![ToolSpec::Namespace(ResponsesApiNamespace {
+                name: "agere_app".to_string(),
+                description: "Agere app tools".to_string(),
+                tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                    name: "automation_update".to_string(),
+                    description: "Update automations".to_string(),
+                    strict: false,
+                    defer_loading: None,
+                    parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+                    output_schema: None,
+                })],
+            })],
+        },
+    );
+
+    assert_eq!(
+        namespace_function_names(&router.model_visible_specs(), "agere_app"),
+        vec!["automation_update".to_string()]
+    );
+
+    let call = router
+        .build_tool_call(
+            &session,
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "agere_app_automation_update".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+                call_id: "call-loaded".to_string(),
+            },
+        )
+        .await?
+        .expect("loaded flat function_call should produce a tool call");
+
+    assert_eq!(
+        call.tool_name,
+        ToolName::namespaced("agere_app", "automation_update")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn normalize_history_item_restores_flat_tool_search_call() -> anyhow::Result<()> {
+    let (_, turn) = make_session_and_context().await;
+    let router = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: vec![ToolSpec::ToolSearch {
+                execution: "client".to_string(),
+                description: "Search deferred tools".to_string(),
+                parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+            }],
+        },
+    );
+
+    let item = router.normalize_history_item(ResponseItem::FunctionCall {
+        id: None,
+        name: "tool_search".to_string(),
+        namespace: None,
+        arguments: r#"{"query":"calendar","limit":1}"#.to_string(),
+        call_id: "search-1".to_string(),
+    });
+
+    assert_eq!(
+        item,
+        ResponseItem::ToolSearchCall {
+            id: None,
+            call_id: Some("search-1".to_string()),
+            status: Some("completed".to_string()),
+            execution: "client".to_string(),
+            arguments: json!({
+                "query": "calendar",
+                "limit": 1,
+            }),
+        }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn normalize_history_item_restores_flat_namespaced_function_call() -> anyhow::Result<()> {
+    let (_, turn) = make_session_and_context().await;
+    let router = ToolRouter::from_config(
+        &turn.tools_config,
+        ToolRouterParams {
+            deferred_mcp_tools: None,
+            mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: vec![ToolSpec::Namespace(ResponsesApiNamespace {
+                name: "agere_app".to_string(),
+                description: "Agere app tools".to_string(),
+                tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                    name: "automation_update".to_string(),
+                    description: "Update automations".to_string(),
+                    strict: false,
+                    defer_loading: None,
+                    parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+                    output_schema: None,
+                })],
+            })],
+        },
+    );
+
+    let item = router.normalize_history_item(ResponseItem::FunctionCall {
+        id: None,
+        name: "agere_app_automation_update".to_string(),
+        namespace: None,
+        arguments: "{}".to_string(),
+        call_id: "call-loaded".to_string(),
+    });
+
+    assert_eq!(
+        item,
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "automation_update".to_string(),
+            namespace: Some("agere_app".to_string()),
+            arguments: "{}".to_string(),
+            call_id: "call-loaded".to_string(),
+        }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> {
     let (_, turn) = make_session_and_context().await;
     let router = ToolRouter::from_config(
@@ -168,6 +475,7 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
             parallel_mcp_server_names: HashSet::from(["echo".to_string()]),
             discoverable_tools: None,
             dynamic_tools: turn.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: Vec::new(),
         },
     );
 
@@ -235,6 +543,7 @@ async fn model_visible_specs_filter_deferred_dynamic_tools() -> anyhow::Result<(
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: &dynamic_tools,
+            loaded_search_tool_specs: Vec::new(),
         },
     );
 

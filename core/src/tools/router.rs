@@ -16,6 +16,7 @@ use agere_protocol::models::SearchToolCallParams;
 use agere_protocol::models::ShellToolCallParams;
 use agere_tools::ConfiguredToolSpec;
 use agere_tools::DiscoverableTool;
+use agere_tools::FlatWireFunctionToolKind;
 use agere_tools::ResponsesApiNamespaceTool;
 use agere_tools::ToolName;
 use agere_tools::ToolSpec;
@@ -49,6 +50,7 @@ pub(crate) struct ToolRouterParams<'a> {
     pub(crate) parallel_mcp_server_names: HashSet<String>,
     pub(crate) discoverable_tools: Option<Vec<DiscoverableTool>>,
     pub(crate) dynamic_tools: &'a [DynamicToolSpec],
+    pub(crate) loaded_search_tool_specs: Vec<ToolSpec>,
 }
 
 impl ToolRouter {
@@ -60,6 +62,7 @@ impl ToolRouter {
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools,
+            loaded_search_tool_specs,
         } = params;
         let builder = build_specs_with_discoverable_tools(
             config,
@@ -75,7 +78,7 @@ impl ToolRouter {
             .filter(|tool| tool.defer_loading)
             .map(|tool| ToolName::new(tool.namespace.clone(), tool.name.clone()))
             .collect::<HashSet<_>>();
-        let model_visible_specs = specs
+        let mut model_visible_specs: Vec<ToolSpec> = specs
             .iter()
             .filter_map(|configured_tool| {
                 if config.code_mode_only_enabled
@@ -90,6 +93,7 @@ impl ToolRouter {
                 )
             })
             .collect();
+        model_visible_specs.extend(loaded_search_tool_specs);
 
         Self {
             registry,
@@ -133,6 +137,69 @@ impl ToolRouter {
             }),
             _ => None,
         })
+    }
+
+    pub(crate) fn normalize_history_item(&self, item: ResponseItem) -> ResponseItem {
+        match item {
+            ResponseItem::FunctionCall {
+                id,
+                name,
+                namespace: None,
+                arguments,
+                call_id,
+            } => {
+                let projection =
+                    agere_tools::FlatWireToolProjection::new(&self.model_visible_specs);
+                match projection.source_kind_for_wire_name(&name) {
+                    Some(FlatWireFunctionToolKind::NamespaceFunction) => {
+                        let canonical_name = projection.canonical_name_for_wire_name(&name);
+                        if let Some(namespace) = canonical_name.namespace {
+                            ResponseItem::FunctionCall {
+                                id,
+                                name: canonical_name.name,
+                                namespace: Some(namespace),
+                                arguments,
+                                call_id,
+                            }
+                        } else {
+                            ResponseItem::FunctionCall {
+                                id,
+                                name,
+                                namespace: None,
+                                arguments,
+                                call_id,
+                            }
+                        }
+                    }
+                    Some(FlatWireFunctionToolKind::ToolSearch) => {
+                        match serde_json::from_str::<SearchToolCallParams>(&arguments) {
+                            Ok(arguments) => ResponseItem::ToolSearchCall {
+                                id,
+                                call_id: Some(call_id),
+                                status: Some("completed".to_string()),
+                                execution: "client".to_string(),
+                                arguments: serde_json::to_value(arguments).unwrap_or_default(),
+                            },
+                            Err(_) => ResponseItem::FunctionCall {
+                                id,
+                                name,
+                                namespace: None,
+                                arguments,
+                                call_id,
+                            },
+                        }
+                    }
+                    Some(FlatWireFunctionToolKind::Function) | None => ResponseItem::FunctionCall {
+                        id,
+                        name,
+                        namespace: None,
+                        arguments,
+                        call_id,
+                    },
+                }
+            }
+            item => item,
+        }
     }
 
     pub(crate) fn create_diff_consumer(
@@ -185,11 +252,30 @@ impl ToolRouter {
                 call_id,
                 ..
             } => {
-                let tool_name = if let Some(namespace) = namespace {
-                    ToolName::namespaced(namespace, name)
+                let (tool_name, is_flat_tool_search) = if let Some(namespace) = namespace {
+                    (ToolName::namespaced(namespace, name), false)
                 } else {
-                    agere_tools::resolve_flattened_tool_name(&self.model_visible_specs, &name)
+                    let projection =
+                        agere_tools::FlatWireToolProjection::new(&self.model_visible_specs);
+                    let source_kind = projection.source_kind_for_wire_name(&name);
+                    (
+                        projection.canonical_name_for_wire_name(&name),
+                        source_kind == Some(FlatWireFunctionToolKind::ToolSearch),
+                    )
                 };
+                if is_flat_tool_search {
+                    let arguments: SearchToolCallParams = serde_json::from_str(&arguments)
+                        .map_err(|err| {
+                            FunctionCallError::RespondToModel(format!(
+                                "failed to parse tool_search arguments: {err}"
+                            ))
+                        })?;
+                    return Ok(Some(ToolCall {
+                        tool_name,
+                        call_id,
+                        payload: ToolPayload::ToolSearch { arguments },
+                    }));
+                }
                 if let Some(tool_info) = session.resolve_mcp_tool_info(&tool_name).await {
                     Ok(Some(ToolCall {
                         tool_name: tool_info.canonical_tool_name(),

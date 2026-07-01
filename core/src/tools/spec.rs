@@ -170,7 +170,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     });
     let deferred_dynamic_tools = dynamic_tools
         .iter()
-        .filter(|tool| tool.defer_loading && (config.namespace_tools || tool.namespace.is_none()))
+        .filter(|tool| tool.defer_loading)
         .cloned()
         .collect::<Vec<_>>();
     let mut tool_search_handler = None;

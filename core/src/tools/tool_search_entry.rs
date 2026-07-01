@@ -54,21 +54,11 @@ pub(crate) fn build_tool_search_entries(
 }
 
 pub(crate) fn build_tool_search_entries_for_config(
-    config: &ToolsConfig,
+    _config: &ToolsConfig,
     mcp_tools: Option<&HashMap<String, ToolInfo>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> Vec<ToolSearchEntry> {
-    let mcp_tools = if config.namespace_tools {
-        mcp_tools
-    } else {
-        None
-    };
-    let dynamic_tools = dynamic_tools
-        .iter()
-        .filter(|tool| config.namespace_tools || tool.namespace.is_none())
-        .cloned()
-        .collect::<Vec<_>>();
-    build_tool_search_entries(mcp_tools, &dynamic_tools)
+    build_tool_search_entries(mcp_tools, dynamic_tools)
 }
 
 fn mcp_tool_search_entry(info: &ToolInfo) -> Result<ToolSearchEntry, serde_json::Error> {

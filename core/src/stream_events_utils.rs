@@ -243,8 +243,13 @@ pub(crate) async fn handle_output_item_done(
                 payload_preview
             );
 
-            record_completed_response_item(ctx.sess.as_ref(), ctx.turn_context.as_ref(), &item)
-                .await;
+            let history_item = ctx.tool_runtime.normalize_history_item(item.clone());
+            record_completed_response_item(
+                ctx.sess.as_ref(),
+                ctx.turn_context.as_ref(),
+                &history_item,
+            )
+            .await;
 
             let cancellation_token = ctx.cancellation_token.child_token();
             let tool_future: InFlightFuture<'static> = Box::pin(

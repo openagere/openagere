@@ -1,6 +1,7 @@
 use super::FlatWireToolProjection;
 use super::project_function_tools_for_flat_wire_api;
 use super::resolve_flattened_tool_name;
+use crate::FlatWireFunctionToolKind;
 use crate::JsonSchema;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiNamespaceTool;
@@ -87,6 +88,63 @@ fn projects_plain_function_tool_without_renaming() {
 
     assert_eq!(projected[0].wire_name, "lookup");
     assert_eq!(projected[0].canonical_name, ToolName::plain("lookup"));
+}
+
+#[test]
+fn projects_tool_search_as_flat_function_tool() {
+    let spec = ToolSpec::ToolSearch {
+        execution: "client".to_string(),
+        description: "Search deferred tools".to_string(),
+        parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+    };
+
+    let projected = project_function_tools_for_flat_wire_api(&spec);
+
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].wire_name, "tool_search");
+    assert_eq!(projected[0].canonical_name, ToolName::plain("tool_search"));
+    assert_eq!(projected[0].description, "Search deferred tools");
+}
+
+#[test]
+fn grouped_projection_disambiguates_plain_tool_search_from_builtin_tool_search() {
+    let specs = vec![
+        ToolSpec::Function(ResponsesApiTool {
+            name: "tool_search".to_string(),
+            description: "Plain tool".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+            output_schema: None,
+        }),
+        ToolSpec::ToolSearch {
+            execution: "client".to_string(),
+            description: "Search deferred tools".to_string(),
+            parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+        },
+    ];
+
+    let projection = FlatWireToolProjection::new(&specs);
+    let plain_wire_name = projection.wire_name_for_function_tool(&ToolName::plain("tool_search"));
+    let search_wire_name = projection.wire_name_for_tool_search();
+
+    assert_ne!(plain_wire_name, search_wire_name);
+    assert_eq!(
+        projection.source_kind_for_wire_name(&plain_wire_name),
+        Some(FlatWireFunctionToolKind::Function)
+    );
+    assert_eq!(
+        projection.source_kind_for_wire_name(&search_wire_name),
+        Some(FlatWireFunctionToolKind::ToolSearch)
+    );
+    assert_eq!(
+        projection.canonical_name_for_wire_name(&plain_wire_name),
+        ToolName::plain("tool_search")
+    );
+    assert_eq!(
+        projection.canonical_name_for_wire_name(&search_wire_name),
+        ToolName::plain("tool_search")
+    );
 }
 
 #[test]

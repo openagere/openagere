@@ -53,6 +53,13 @@ impl ToolCallRuntime {
         self.router.find_spec(tool_name)
     }
 
+    pub(crate) fn normalize_history_item(
+        &self,
+        item: agere_protocol::models::ResponseItem,
+    ) -> agere_protocol::models::ResponseItem {
+        self.router.normalize_history_item(item)
+    }
+
     pub(crate) async fn build_tool_call(
         &self,
         item: agere_protocol::models::ResponseItem,

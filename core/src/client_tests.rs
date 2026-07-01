@@ -11,14 +11,20 @@ use super::X_OPENAI_SUBAGENT_HEADER;
 use super::anthropic_tool_definitions_from_function_spec;
 use super::chat_tool_definitions_from_function_spec;
 use super::input_items_for_flat_wire_api;
+use super::input_items_for_responses_provider;
 use agere_api::ApiError;
 use agere_api::ResponseEvent;
 use agere_app_server_protocol::AuthMode;
 use agere_model_provider::BearerAuthProvider;
+use agere_model_provider_info::ModelProviderAwsAuthInfo;
 use agere_model_provider_info::WireApi;
 use agere_model_provider_info::create_oss_provider_with_base_url;
 use agere_otel::SessionTelemetry;
 use agere_protocol::ThreadId;
+use agere_protocol::config_types::ReasoningSummary;
+use agere_protocol::config_types::ServiceTier;
+use agere_protocol::config_types::WebSearchContextSize;
+use agere_protocol::models::BaseInstructions;
 use agere_protocol::models::ContentItem;
 use agere_protocol::models::FunctionCallOutputPayload;
 use agere_protocol::models::ReasoningItemReasoningSummary;
@@ -38,6 +44,7 @@ use agere_tools::JsonSchema;
 use agere_tools::ResponsesApiNamespace;
 use agere_tools::ResponsesApiNamespaceTool;
 use agere_tools::ResponsesApiTool;
+use agere_tools::ResponsesApiWebSearchFilters;
 use agere_tools::ToolSpec;
 use agere_tools::create_apply_patch_freeform_tool;
 use futures::StreamExt;
@@ -347,6 +354,440 @@ fn flat_wire_api_input_rewrites_namespaced_function_call_history() {
         }
     );
     assert_eq!(rewritten[1], input[1]);
+}
+
+#[test]
+fn flat_wire_api_input_rewrites_tool_search_history_as_function_history() {
+    let tools = vec![ToolSpec::ToolSearch {
+        execution: "client".to_string(),
+        description: "Search deferred tools".to_string(),
+        parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+    }];
+    let input = vec![
+        ResponseItem::ToolSearchCall {
+            id: None,
+            call_id: Some("search-1".to_string()),
+            status: Some("completed".to_string()),
+            execution: "client".to_string(),
+            arguments: json!({"query": "calendar"}),
+        },
+        ResponseItem::ToolSearchOutput {
+            call_id: Some("search-1".to_string()),
+            status: "completed".to_string(),
+            execution: "client".to_string(),
+            tools: vec![json!({
+                "type": "namespace",
+                "name": "mcp__calendar__",
+                "description": "Calendar tools",
+                "tools": []
+            })],
+        },
+    ];
+
+    let projection = agere_tools::FlatWireToolProjection::new(&tools);
+    let rewritten = input_items_for_flat_wire_api(&input, &projection);
+
+    assert_eq!(
+        rewritten[0],
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "tool_search".to_string(),
+            namespace: None,
+            arguments: r#"{"query":"calendar"}"#.to_string(),
+            call_id: "search-1".to_string(),
+        }
+    );
+    match &rewritten[1] {
+        ResponseItem::FunctionCallOutput { call_id, output } => {
+            assert_eq!(call_id, "search-1");
+            assert_eq!(
+                output.text_content(),
+                Some(
+                    r#"[{"description":"Calendar tools","name":"mcp__calendar__","tools":[],"type":"namespace"}]"#
+                )
+            );
+        }
+        other => panic!("expected function output, got {other:?}"),
+    }
+}
+
+#[test]
+fn flat_wire_api_input_does_not_rewrite_server_tool_search_output() {
+    let tools = vec![ToolSpec::ToolSearch {
+        execution: "client".to_string(),
+        description: "Search deferred tools".to_string(),
+        parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+    }];
+    let input = vec![ResponseItem::ToolSearchOutput {
+        call_id: Some("search-1".to_string()),
+        status: "completed".to_string(),
+        execution: "server".to_string(),
+        tools: vec![json!({
+            "type": "namespace",
+            "name": "mcp__calendar__",
+            "description": "Calendar tools",
+            "tools": []
+        })],
+    }];
+
+    let projection = agere_tools::FlatWireToolProjection::new(&tools);
+    let rewritten = input_items_for_flat_wire_api(&input, &projection);
+
+    assert_eq!(rewritten, input);
+}
+
+#[test]
+fn responses_tools_flatten_namespace_specs_when_provider_disables_namespace_tools() {
+    let namespace = ToolSpec::Namespace(ResponsesApiNamespace {
+        name: "mcp__calendar__".to_string(),
+        description: "Calendar tools".to_string(),
+        tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: "Create an event".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+            output_schema: None,
+        })],
+    });
+
+    let tools = super::responses_tools_json_for_provider(&[namespace], false)
+        .expect("responses tools should serialize");
+
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["type"], "function");
+    assert_eq!(tools[0]["name"], "mcp__calendar__create_event");
+}
+
+#[test]
+fn responses_tools_preserve_native_specs_when_provider_disables_namespace_tools() {
+    let tools = super::responses_tools_json_for_provider(
+        &[
+            ToolSpec::Namespace(ResponsesApiNamespace {
+                name: "mcp__calendar__".to_string(),
+                description: "Calendar tools".to_string(),
+                tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                    name: "create_event".to_string(),
+                    description: "Create an event".to_string(),
+                    strict: false,
+                    defer_loading: None,
+                    parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+                    output_schema: None,
+                })],
+            }),
+            ToolSpec::WebSearch {
+                external_web_access: Some(true),
+                filters: Some(ResponsesApiWebSearchFilters {
+                    allowed_domains: Some(vec!["example.com".to_string()]),
+                }),
+                user_location: None,
+                search_context_size: Some(WebSearchContextSize::High),
+                search_content_types: None,
+            },
+        ],
+        false,
+    )
+    .expect("responses tools should serialize");
+
+    assert_eq!(tools.len(), 2);
+    assert_eq!(tools[0]["type"], "function");
+    assert_eq!(tools[0]["name"], "mcp__calendar__create_event");
+    assert_eq!(tools[1]["type"], "web_search");
+    assert_eq!(tools[1]["external_web_access"], true);
+}
+
+#[test]
+fn responses_request_flattens_history_when_provider_disables_namespace_tools() {
+    let mut provider =
+        create_oss_provider_with_base_url("https://bedrock.example.com/v1", WireApi::Responses);
+    provider.aws = Some(ModelProviderAwsAuthInfo {
+        profile: None,
+        region: Some("us-east-1".to_string()),
+    });
+    let client = ModelClient::new(
+        /*auth_manager*/ None,
+        ThreadId::new(),
+        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        provider.clone(),
+        SessionSource::Cli,
+        /*model_verbosity*/ None,
+        /*enable_request_compression*/ false,
+        /*include_timing_metrics*/ false,
+        /*beta_features_header*/ None,
+    );
+    let session = client.new_session();
+    let prompt = super::Prompt {
+        input: vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "create_event".to_string(),
+                namespace: Some("mcp__calendar__".to_string()),
+                arguments: "{}".to_string(),
+                call_id: "call-event".to_string(),
+            },
+            ResponseItem::ToolSearchCall {
+                id: None,
+                call_id: Some("search-1".to_string()),
+                status: Some("completed".to_string()),
+                execution: "client".to_string(),
+                arguments: json!({"query": "calendar"}),
+            },
+            ResponseItem::ToolSearchOutput {
+                call_id: Some("search-1".to_string()),
+                status: "completed".to_string(),
+                execution: "client".to_string(),
+                tools: vec![json!({
+                    "type": "namespace",
+                    "name": "mcp__calendar__",
+                    "description": "Calendar tools",
+                    "tools": []
+                })],
+            },
+        ],
+        tools: vec![
+            ToolSpec::Namespace(ResponsesApiNamespace {
+                name: "mcp__calendar__".to_string(),
+                description: "Calendar tools".to_string(),
+                tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                    name: "create_event".to_string(),
+                    description: "Create an event".to_string(),
+                    strict: false,
+                    defer_loading: None,
+                    parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+                    output_schema: None,
+                })],
+            }),
+            ToolSpec::ToolSearch {
+                execution: "client".to_string(),
+                description: "Search deferred tools".to_string(),
+                parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+            },
+        ],
+        base_instructions: BaseInstructions {
+            text: "base".to_string(),
+        },
+        ..Default::default()
+    };
+    let api_provider = provider
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("provider should convert");
+
+    let request = session
+        .build_responses_request(
+            &api_provider,
+            &prompt,
+            &test_model_info(),
+            /*effort*/ None,
+            ReasoningSummary::None,
+            Option::<ServiceTier>::None,
+        )
+        .expect("request should build");
+
+    assert_eq!(request.tools[0]["type"], "function");
+    assert_eq!(request.tools[0]["name"], "mcp__calendar__create_event");
+    assert_eq!(request.tools[1]["type"], "function");
+    assert_eq!(request.tools[1]["name"], "tool_search");
+    assert_eq!(
+        request.input[0],
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "mcp__calendar__create_event".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: "call-event".to_string(),
+        }
+    );
+    assert_eq!(
+        request.input[1],
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "tool_search".to_string(),
+            namespace: None,
+            arguments: r#"{"query":"calendar"}"#.to_string(),
+            call_id: "search-1".to_string(),
+        }
+    );
+    assert!(matches!(
+        request.input[2],
+        ResponseItem::FunctionCallOutput { .. }
+    ));
+}
+
+#[test]
+fn responses_provider_input_restores_native_history_when_namespace_tools_are_supported() {
+    let tools = vec![
+        ToolSpec::Namespace(ResponsesApiNamespace {
+            name: "mcp__calendar__".to_string(),
+            description: "Calendar tools".to_string(),
+            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "create_event".to_string(),
+                description: "Create an event".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+                output_schema: None,
+            })],
+        }),
+        ToolSpec::ToolSearch {
+            execution: "client".to_string(),
+            description: "Search deferred tools".to_string(),
+            parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+        },
+    ];
+    let input = vec![
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "mcp__calendar__create_event".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: "call-event".to_string(),
+        },
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "tool_search".to_string(),
+            namespace: None,
+            arguments: r#"{"query":"calendar"}"#.to_string(),
+            call_id: "search-1".to_string(),
+        },
+        ResponseItem::FunctionCallOutput {
+            call_id: "search-1".to_string(),
+            output: FunctionCallOutputPayload::from_text(
+                r#"[{"description":"Calendar tools","name":"mcp__calendar__","tools":[],"type":"namespace"}]"#
+                    .to_string(),
+            ),
+        },
+    ];
+
+    let rewritten = input_items_for_responses_provider(&input, &tools, true);
+
+    assert_eq!(
+        rewritten[0],
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "create_event".to_string(),
+            namespace: Some("mcp__calendar__".to_string()),
+            arguments: "{}".to_string(),
+            call_id: "call-event".to_string(),
+        }
+    );
+    assert_eq!(
+        rewritten[1],
+        ResponseItem::ToolSearchCall {
+            id: None,
+            call_id: Some("search-1".to_string()),
+            status: Some("completed".to_string()),
+            execution: "client".to_string(),
+            arguments: json!({"query":"calendar"}),
+        }
+    );
+    assert_eq!(
+        rewritten[2],
+        ResponseItem::ToolSearchOutput {
+            call_id: Some("search-1".to_string()),
+            status: "completed".to_string(),
+            execution: "client".to_string(),
+            tools: vec![json!({
+                "description": "Calendar tools",
+                "name": "mcp__calendar__",
+                "tools": [],
+                "type": "namespace"
+            })],
+        }
+    );
+}
+
+#[test]
+fn responses_provider_restores_flat_tool_search_history_and_advertises_loaded_tools() {
+    let mut provider =
+        create_oss_provider_with_base_url("https://api.example.com/v1", WireApi::Responses);
+    provider.wire_api = WireApi::Responses;
+    let client = ModelClient::new(
+        /*auth_manager*/ None,
+        ThreadId::new(),
+        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        provider.clone(),
+        SessionSource::Cli,
+        /*model_verbosity*/ None,
+        /*enable_request_compression*/ false,
+        /*include_timing_metrics*/ false,
+        /*beta_features_header*/ None,
+    );
+    let session = client.new_session();
+    let loaded_tool = ToolSpec::Namespace(ResponsesApiNamespace {
+        name: "mcp__calendar__".to_string(),
+        description: "Calendar tools".to_string(),
+        tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+            name: "create_event".to_string(),
+            description: "Create an event".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+            output_schema: None,
+        })],
+    });
+    let prompt = super::Prompt {
+        input: vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "tool_search".to_string(),
+                namespace: None,
+                arguments: r#"{"query":"calendar"}"#.to_string(),
+                call_id: "search-1".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "search-1".to_string(),
+                output: FunctionCallOutputPayload::from_text(
+                    r#"[{"description":"Calendar tools","name":"mcp__calendar__","tools":[{"description":"Create an event","name":"create_event","parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false,"type":"function"}],"type":"namespace"}]"#
+                        .to_string(),
+                ),
+            },
+        ],
+        tools: vec![
+            ToolSpec::ToolSearch {
+                execution: "client".to_string(),
+                description: "Search deferred tools".to_string(),
+                parameters: JsonSchema::object(BTreeMap::new(), None, Some(false.into())),
+            },
+            loaded_tool,
+        ],
+        base_instructions: BaseInstructions {
+            text: "base".to_string(),
+        },
+        ..Default::default()
+    };
+    let api_provider = provider
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("provider should convert");
+
+    let request = session
+        .build_responses_request(
+            &api_provider,
+            &prompt,
+            &test_model_info(),
+            /*effort*/ None,
+            ReasoningSummary::None,
+            Option::<ServiceTier>::None,
+        )
+        .expect("request should build");
+
+    assert_eq!(request.tools.len(), 2);
+    assert_eq!(request.tools[0]["type"], "tool_search");
+    assert_eq!(request.tools[1]["type"], "namespace");
+    assert_eq!(request.tools[1]["name"], "mcp__calendar__");
+    assert_eq!(
+        request.input[0],
+        ResponseItem::ToolSearchCall {
+            id: None,
+            call_id: Some("search-1".to_string()),
+            status: Some("completed".to_string()),
+            execution: "client".to_string(),
+            arguments: json!({"query":"calendar"}),
+        }
+    );
+    assert!(matches!(
+        request.input[1],
+        ResponseItem::ToolSearchOutput { .. }
+    ));
 }
 
 #[test]

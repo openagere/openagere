@@ -261,13 +261,9 @@ pub fn build_tool_registry_plan(
     let deferred_dynamic_tools = params
         .dynamic_tools
         .iter()
-        .filter(|tool| tool.defer_loading && (config.namespace_tools || tool.namespace.is_none()))
+        .filter(|tool| tool.defer_loading)
         .collect::<Vec<_>>();
-    let deferred_mcp_tools_for_search = if config.namespace_tools {
-        params.deferred_mcp_tools
-    } else {
-        None
-    };
+    let deferred_mcp_tools_for_search = params.deferred_mcp_tools;
 
     if config.search_tool
         && (deferred_mcp_tools_for_search.is_some() || !deferred_dynamic_tools.is_empty())
@@ -584,11 +580,6 @@ pub fn build_tool_registry_plan(
             /*supports_parallel_tool_calls*/ false,
             config.code_mode_enabled,
         );
-    }
-
-    if !config.namespace_tools {
-        plan.specs
-            .retain(|configured_tool| !matches!(&configured_tool.spec, ToolSpec::Namespace(_)));
     }
 
     plan

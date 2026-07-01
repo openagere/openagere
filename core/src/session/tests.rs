@@ -7,6 +7,7 @@ use crate::context::ContextualUserFragment;
 use crate::context::TurnAborted;
 use crate::exec::ExecCapturePolicy;
 use crate::function_tool::FunctionCallError;
+use crate::session::turn::built_tools;
 use crate::shell::default_user_shell;
 use crate::skills::SkillRenderSideEffects;
 use crate::skills::render::SkillMetadataBudget;
@@ -72,6 +73,7 @@ use crate::tools::handlers::ShellHandler;
 use crate::tools::handlers::UnifiedExecHandler;
 use crate::tools::registry::ToolHandler;
 use crate::tools::router::ToolCallSource;
+use crate::tools::router::ToolRouterParams;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use agere_app_server_protocol::AppInfo;
 use agere_config::config_toml::ConfigToml;
@@ -507,6 +509,7 @@ fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> T
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: Vec::new(),
         },
     ));
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
@@ -6357,6 +6360,132 @@ async fn handle_output_item_done_skips_image_save_message_when_save_fails() {
 }
 
 #[tokio::test]
+async fn handle_output_item_done_records_tool_search_calls_as_provider_neutral_history() {
+    let (session, turn_context) = make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn_context = Arc::new(turn_context);
+    let router = Arc::new(ToolRouter::from_config(
+        &turn_context.tools_config,
+        ToolRouterParams {
+            mcp_tools: None,
+            deferred_mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: HashSet::new(),
+            discoverable_tools: None,
+            dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: vec![agere_tools::ToolSpec::ToolSearch {
+                execution: "client".to_string(),
+                description: "Search deferred tools".to_string(),
+                parameters: agere_tools::JsonSchema::object(
+                    Default::default(),
+                    None,
+                    Some(false.into()),
+                ),
+            }],
+        },
+    ));
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let mut ctx = HandleOutputCtx {
+        sess: Arc::clone(&session),
+        turn_context: Arc::clone(&turn_context),
+        tool_runtime: ToolCallRuntime::new(
+            router,
+            Arc::clone(&session),
+            Arc::clone(&turn_context),
+            tracker,
+        ),
+        cancellation_token: CancellationToken::new(),
+    };
+
+    handle_output_item_done(
+        &mut ctx,
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "tool_search".to_string(),
+            namespace: None,
+            arguments: r#"{"query":"calendar"}"#.to_string(),
+            call_id: "search-1".to_string(),
+        },
+        /*previously_active_item*/ None,
+        OutputItemCompletion::Final,
+    )
+    .await
+    .expect("tool search call should be handled");
+
+    assert_eq!(
+        session.clone_history().await.raw_items(),
+        &[ResponseItem::ToolSearchCall {
+            id: None,
+            call_id: Some("search-1".to_string()),
+            status: Some("completed".to_string()),
+            execution: "client".to_string(),
+            arguments: serde_json::json!({"query": "calendar"}),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn built_tools_includes_native_tool_search_outputs_for_namespace_providers() {
+    let (session, turn_context) = make_session_and_context().await;
+    assert!(
+        turn_context.tools_config.namespace_tools,
+        "test setup should use namespace-capable tool config"
+    );
+    let input = vec![ResponseItem::ToolSearchOutput {
+        call_id: Some("search-1".to_string()),
+        status: "completed".to_string(),
+        execution: "client".to_string(),
+        tools: vec![serde_json::json!({
+            "type": "namespace",
+            "name": "mcp__calendar__",
+            "description": "Calendar tools",
+            "tools": [{
+                "type": "function",
+                "name": "create_event",
+                "description": "Create an event",
+                "strict": false,
+                "defer_loading": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }
+            }]
+        })],
+    }];
+
+    let router = built_tools(
+        &session,
+        &turn_context,
+        &input,
+        &HashSet::new(),
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("router should build");
+
+    let specs = router.model_visible_specs();
+    let loaded_tool_names = specs.iter().find_map(|spec| {
+        if let agere_tools::ToolSpec::Namespace(namespace) = spec
+            && namespace.name == "mcp__calendar__"
+        {
+            return Some(
+                namespace
+                    .tools
+                    .iter()
+                    .map(|tool| match tool {
+                        agere_tools::ResponsesApiNamespaceTool::Function(tool) => tool.name.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        None
+    });
+    assert_eq!(loaded_tool_names, Some(vec!["create_event".to_string()]));
+}
+
+#[tokio::test]
 async fn build_initial_context_uses_previous_turn_settings_for_realtime_end() {
     let (session, turn_context) = make_session_and_context().await;
     let previous_turn_settings = PreviousTurnSettings {
@@ -8655,6 +8784,7 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            loaded_search_tool_specs: Vec::new(),
         },
     );
     let item = ResponseItem::CustomToolCall {

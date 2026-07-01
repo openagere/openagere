@@ -16,15 +16,31 @@ const HASH_SEPARATOR: &str = "__";
 pub struct FlatWireFunctionTool {
     pub wire_name: String,
     pub canonical_name: ToolName,
+    pub source_kind: FlatWireFunctionToolKind,
     pub description: String,
     pub parameters: JsonSchema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FlatWireFunctionToolKind {
+    Function,
+    NamespaceFunction,
+    ToolSearch,
 }
 
 #[derive(Debug, Clone)]
 pub struct FlatWireToolProjection {
     function_tools: Vec<FlatWireFunctionTool>,
     wire_names_by_canonical_name: HashMap<ToolName, String>,
+    wire_names_by_tool_key: HashMap<FlatWireFunctionToolKey, String>,
     canonical_names_by_wire_name: HashMap<String, ToolName>,
+    source_kinds_by_wire_name: HashMap<String, FlatWireFunctionToolKind>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FlatWireFunctionToolKey {
+    canonical_name: ToolName,
+    source_kind: FlatWireFunctionToolKind,
 }
 
 impl FlatWireToolProjection {
@@ -39,15 +55,33 @@ impl FlatWireToolProjection {
             .iter()
             .map(|tool| (tool.canonical_name.clone(), tool.wire_name.clone()))
             .collect();
+        let wire_names_by_tool_key = projected
+            .iter()
+            .map(|tool| {
+                (
+                    FlatWireFunctionToolKey {
+                        canonical_name: tool.canonical_name.clone(),
+                        source_kind: tool.source_kind,
+                    },
+                    tool.wire_name.clone(),
+                )
+            })
+            .collect();
         let canonical_names_by_wire_name = projected
             .iter()
             .map(|tool| (tool.wire_name.clone(), tool.canonical_name.clone()))
+            .collect();
+        let source_kinds_by_wire_name = projected
+            .iter()
+            .map(|tool| (tool.wire_name.clone(), tool.source_kind))
             .collect();
 
         Self {
             function_tools: projected,
             wire_names_by_canonical_name,
+            wire_names_by_tool_key,
             canonical_names_by_wire_name,
+            source_kinds_by_wire_name,
         }
     }
 
@@ -62,9 +96,45 @@ impl FlatWireToolProjection {
             .unwrap_or_else(|| ToolName::plain(wire_name))
     }
 
+    pub fn source_kind_for_wire_name(&self, wire_name: &str) -> Option<FlatWireFunctionToolKind> {
+        self.source_kinds_by_wire_name.get(wire_name).copied()
+    }
+
     pub fn wire_name_for_canonical_name(&self, canonical_name: &ToolName) -> String {
         self.wire_names_by_canonical_name
             .get(canonical_name)
+            .cloned()
+            .unwrap_or_else(|| {
+                provider_valid_wire_name(&flattened_tool_name(canonical_name), canonical_name)
+            })
+    }
+
+    pub fn wire_name_for_function_tool(&self, canonical_name: &ToolName) -> String {
+        let source_kind = if canonical_name.namespace.is_some() {
+            FlatWireFunctionToolKind::NamespaceFunction
+        } else {
+            FlatWireFunctionToolKind::Function
+        };
+        self.wire_name_for_tool_key(canonical_name, source_kind)
+    }
+
+    pub fn wire_name_for_tool_search(&self) -> String {
+        self.wire_name_for_tool_key(
+            &ToolName::plain(crate::TOOL_SEARCH_TOOL_NAME),
+            FlatWireFunctionToolKind::ToolSearch,
+        )
+    }
+
+    fn wire_name_for_tool_key(
+        &self,
+        canonical_name: &ToolName,
+        source_kind: FlatWireFunctionToolKind,
+    ) -> String {
+        self.wire_names_by_tool_key
+            .get(&FlatWireFunctionToolKey {
+                canonical_name: canonical_name.clone(),
+                source_kind,
+            })
             .cloned()
             .unwrap_or_else(|| {
                 provider_valid_wire_name(&flattened_tool_name(canonical_name), canonical_name)
@@ -77,6 +147,7 @@ pub fn project_function_tools_for_flat_wire_api(spec: &ToolSpec) -> Vec<FlatWire
         ToolSpec::Function(tool) => vec![FlatWireFunctionTool {
             wire_name: provider_valid_wire_name(&tool.name, &ToolName::plain(tool.name.clone())),
             canonical_name: ToolName::plain(tool.name.clone()),
+            source_kind: FlatWireFunctionToolKind::Function,
             description: tool.description.clone(),
             parameters: tool.parameters.clone(),
         }],
@@ -93,14 +164,25 @@ pub fn project_function_tools_for_flat_wire_api(spec: &ToolSpec) -> Vec<FlatWire
                             &canonical_name,
                         ),
                         canonical_name,
+                        source_kind: FlatWireFunctionToolKind::NamespaceFunction,
                         description: tool.description.clone(),
                         parameters: tool.parameters.clone(),
                     }
                 }
             })
             .collect(),
-        ToolSpec::ToolSearch { .. }
-        | ToolSpec::LocalShell {}
+        ToolSpec::ToolSearch {
+            description,
+            parameters,
+            ..
+        } => vec![FlatWireFunctionTool {
+            wire_name: crate::TOOL_SEARCH_TOOL_NAME.to_string(),
+            canonical_name: ToolName::plain(crate::TOOL_SEARCH_TOOL_NAME),
+            source_kind: FlatWireFunctionToolKind::ToolSearch,
+            description: description.clone(),
+            parameters: parameters.clone(),
+        }],
+        ToolSpec::LocalShell {}
         | ToolSpec::ImageGeneration { .. }
         | ToolSpec::WebSearch { .. }
         | ToolSpec::Freeform(_) => Vec::new(),
