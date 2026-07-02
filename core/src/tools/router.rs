@@ -4,6 +4,7 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::model_visible_specs::build_model_visible_specs;
 use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::registry::ToolRegistry;
@@ -24,6 +25,7 @@ use agere_tools::ToolsConfig;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
@@ -41,6 +43,7 @@ pub struct ToolRouter {
     specs: Vec<ConfiguredToolSpec>,
     model_visible_specs: Vec<ToolSpec>,
     parallel_mcp_server_names: HashSet<String>,
+    normalized_flat_tool_search_call_ids: Mutex<HashSet<String>>,
 }
 
 pub(crate) struct ToolRouterParams<'a> {
@@ -50,7 +53,7 @@ pub(crate) struct ToolRouterParams<'a> {
     pub(crate) parallel_mcp_server_names: HashSet<String>,
     pub(crate) discoverable_tools: Option<Vec<DiscoverableTool>>,
     pub(crate) dynamic_tools: &'a [DynamicToolSpec],
-    pub(crate) loaded_search_tool_specs: Vec<ToolSpec>,
+    pub(crate) history_input: &'a [ResponseItem],
 }
 
 impl ToolRouter {
@@ -62,7 +65,7 @@ impl ToolRouter {
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools,
-            loaded_search_tool_specs,
+            history_input,
         } = params;
         let builder = build_specs_with_discoverable_tools(
             config,
@@ -73,33 +76,15 @@ impl ToolRouter {
             dynamic_tools,
         );
         let (specs, registry) = builder.build();
-        let deferred_dynamic_tools = dynamic_tools
-            .iter()
-            .filter(|tool| tool.defer_loading)
-            .map(|tool| ToolName::new(tool.namespace.clone(), tool.name.clone()))
-            .collect::<HashSet<_>>();
-        let mut model_visible_specs: Vec<ToolSpec> = specs
-            .iter()
-            .filter_map(|configured_tool| {
-                if config.code_mode_only_enabled
-                    && agere_code_mode::is_code_mode_nested_tool(configured_tool.name())
-                {
-                    return None;
-                }
-
-                filter_deferred_dynamic_tool_spec(
-                    configured_tool.spec.clone(),
-                    &deferred_dynamic_tools,
-                )
-            })
-            .collect();
-        model_visible_specs.extend(loaded_search_tool_specs);
+        let model_visible_specs =
+            build_model_visible_specs(config, &specs, dynamic_tools, history_input);
 
         Self {
             registry,
             specs,
             model_visible_specs,
             parallel_mcp_server_names,
+            normalized_flat_tool_search_call_ids: Mutex::new(HashSet::new()),
         }
     }
 
@@ -173,13 +158,19 @@ impl ToolRouter {
                     }
                     Some(FlatWireFunctionToolKind::ToolSearch) => {
                         match serde_json::from_str::<SearchToolCallParams>(&arguments) {
-                            Ok(arguments) => ResponseItem::ToolSearchCall {
-                                id,
-                                call_id: Some(call_id),
-                                status: Some("completed".to_string()),
-                                execution: "client".to_string(),
-                                arguments: serde_json::to_value(arguments).unwrap_or_default(),
-                            },
+                            Ok(arguments) => {
+                                self.normalized_flat_tool_search_call_ids
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .insert(call_id.clone());
+                                ResponseItem::ToolSearchCall {
+                                    id,
+                                    call_id: Some(call_id),
+                                    status: Some("completed".to_string()),
+                                    execution: "client".to_string(),
+                                    arguments: serde_json::to_value(arguments).unwrap_or_default(),
+                                }
+                            }
                             Err(_) => ResponseItem::FunctionCall {
                                 id,
                                 name,
@@ -196,6 +187,27 @@ impl ToolRouter {
                         arguments,
                         call_id,
                     },
+                }
+            }
+            ResponseItem::FunctionCallOutput { call_id, output }
+                if self
+                    .normalized_flat_tool_search_call_ids
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .contains(&call_id) =>
+            {
+                if let Some(tools) = output
+                    .text_content()
+                    .and_then(|text| serde_json::from_str::<Vec<serde_json::Value>>(text).ok())
+                {
+                    ResponseItem::ToolSearchOutput {
+                        call_id: Some(call_id),
+                        status: "completed".to_string(),
+                        execution: "client".to_string(),
+                        tools,
+                    }
+                } else {
+                    ResponseItem::FunctionCallOutput { call_id, output }
                 }
             }
             item => item,
@@ -386,38 +398,6 @@ impl ToolRouter {
     }
 }
 
-fn filter_deferred_dynamic_tool_spec(
-    spec: ToolSpec,
-    deferred_dynamic_tools: &HashSet<ToolName>,
-) -> Option<ToolSpec> {
-    if deferred_dynamic_tools.is_empty() {
-        return Some(spec);
-    }
-
-    match spec {
-        ToolSpec::Function(tool) => {
-            if deferred_dynamic_tools.contains(&ToolName::plain(tool.name.as_str())) {
-                None
-            } else {
-                Some(ToolSpec::Function(tool))
-            }
-        }
-        ToolSpec::Namespace(mut namespace) => {
-            let namespace_name = namespace.name.clone();
-            namespace.tools.retain(|tool| match tool {
-                ResponsesApiNamespaceTool::Function(tool) => !deferred_dynamic_tools.contains(
-                    &ToolName::namespaced(namespace_name.as_str(), tool.name.as_str()),
-                ),
-            });
-            if namespace.tools.is_empty() {
-                None
-            } else {
-                Some(ToolSpec::Namespace(namespace))
-            }
-        }
-        spec => Some(spec),
-    }
-}
 #[cfg(test)]
 #[path = "router_tests.rs"]
 mod tests;

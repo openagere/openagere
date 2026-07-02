@@ -1083,11 +1083,7 @@ fn input_items_for_namespace_responses_api(
                 namespace: None,
                 call_id,
                 ..
-            } if projection.source_kind_for_wire_name(name)
-                == Some(FlatWireFunctionToolKind::ToolSearch) =>
-            {
-                Some(call_id.clone())
-            }
+            } if is_namespace_responses_tool_search_call(name, projection) => Some(call_id.clone()),
             _ => None,
         })
         .collect::<std::collections::HashSet<_>>();
@@ -1101,36 +1097,40 @@ fn input_items_for_namespace_responses_api(
                 namespace: None,
                 arguments,
                 call_id,
-            } => match projection.source_kind_for_wire_name(name) {
-                Some(FlatWireFunctionToolKind::NamespaceFunction) => {
-                    let canonical_name = projection.canonical_name_for_wire_name(name);
-                    if let Some(namespace) = canonical_name.namespace {
-                        ResponseItem::FunctionCall {
-                            id: id.clone(),
-                            name: canonical_name.name,
-                            namespace: Some(namespace),
-                            arguments: arguments.clone(),
-                            call_id: call_id.clone(),
-                        }
-                    } else {
-                        item.clone()
-                    }
-                }
-                Some(FlatWireFunctionToolKind::ToolSearch) => {
-                    if let Ok(arguments) = serde_json::from_str(arguments) {
-                        ResponseItem::ToolSearchCall {
+            } => {
+                if is_namespace_responses_tool_search_call(name, projection) {
+                    return match serde_json::from_str(arguments) {
+                        Ok(arguments) => ResponseItem::ToolSearchCall {
                             id: id.clone(),
                             call_id: Some(call_id.clone()),
                             status: Some("completed".to_string()),
                             execution: "client".to_string(),
                             arguments,
-                        }
-                    } else {
-                        item.clone()
-                    }
+                        },
+                        Err(_) => item.clone(),
+                    };
                 }
-                Some(FlatWireFunctionToolKind::Function) | None => item.clone(),
-            },
+
+                match projection.source_kind_for_wire_name(name) {
+                    Some(FlatWireFunctionToolKind::NamespaceFunction) => {
+                        let canonical_name = projection.canonical_name_for_wire_name(name);
+                        if let Some(namespace) = canonical_name.namespace {
+                            ResponseItem::FunctionCall {
+                                id: id.clone(),
+                                name: canonical_name.name,
+                                namespace: Some(namespace),
+                                arguments: arguments.clone(),
+                                call_id: call_id.clone(),
+                            }
+                        } else {
+                            item.clone()
+                        }
+                    }
+                    Some(FlatWireFunctionToolKind::Function)
+                    | Some(FlatWireFunctionToolKind::ToolSearch)
+                    | None => item.clone(),
+                }
+            }
             ResponseItem::FunctionCallOutput { call_id, output }
                 if flat_tool_search_call_ids.contains(call_id) =>
             {
@@ -1151,6 +1151,19 @@ fn input_items_for_namespace_responses_api(
             item => item.clone(),
         })
         .collect()
+}
+
+fn is_namespace_responses_tool_search_call(
+    name: &str,
+    projection: &agere_tools::FlatWireToolProjection,
+) -> bool {
+    match projection.source_kind_for_wire_name(name) {
+        Some(FlatWireFunctionToolKind::ToolSearch) => true,
+        Some(FlatWireFunctionToolKind::Function | FlatWireFunctionToolKind::NamespaceFunction) => {
+            false
+        }
+        None => false,
+    }
 }
 
 impl ModelClientSession {

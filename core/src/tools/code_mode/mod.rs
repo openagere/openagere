@@ -58,13 +58,22 @@ pub(crate) struct ExecContext {
 
 pub(crate) struct CodeModeService {
     inner: agere_code_mode::CodeModeService,
+    #[cfg(test)]
+    worker_start_tool_names: tokio::sync::Mutex<Vec<Vec<String>>>,
 }
 
 impl CodeModeService {
     pub(crate) fn new() -> Self {
         Self {
             inner: agere_code_mode::CodeModeService::new(),
+            #[cfg(test)]
+            worker_start_tool_names: tokio::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn worker_start_tool_names(&self) -> Vec<Vec<String>> {
+        self.worker_start_tool_names.lock().await.clone()
     }
 
     pub(crate) async fn stored_values(&self) -> std::collections::HashMap<String, JsonValue> {
@@ -105,6 +114,37 @@ impl CodeModeService {
     ) -> Option<agere_code_mode::CodeModeTurnWorker> {
         if !turn.features.enabled(Feature::CodeMode) {
             return None;
+        }
+
+        #[cfg(test)]
+        {
+            let tool_names = router
+                .model_visible_specs()
+                .into_iter()
+                .flat_map(|spec| match spec {
+                    ToolSpec::Function(tool) => vec![tool.name],
+                    ToolSpec::Freeform(tool) => vec![tool.name],
+                    ToolSpec::Namespace(namespace) => {
+                        let namespace_name = namespace.name;
+                        namespace
+                            .tools
+                            .into_iter()
+                            .map(|tool| match tool {
+                                agere_tools::ResponsesApiNamespaceTool::Function(tool) => {
+                                    agere_tools::code_mode_name_for_tool_name(
+                                        &ToolName::namespaced(namespace_name.clone(), tool.name),
+                                    )
+                                }
+                            })
+                            .collect()
+                    }
+                    ToolSpec::ToolSearch { .. }
+                    | ToolSpec::LocalShell {}
+                    | ToolSpec::ImageGeneration { .. }
+                    | ToolSpec::WebSearch { .. } => Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            self.worker_start_tool_names.lock().await.push(tool_names);
         }
 
         let exec = ExecContext {
@@ -302,7 +342,7 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
             parallel_mcp_server_names,
             discoverable_tools: None,
             dynamic_tools: exec.turn.dynamic_tools.as_slice(),
-            loaded_search_tool_specs: Vec::new(),
+            history_input: &[],
         },
     )
 }

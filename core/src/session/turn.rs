@@ -55,8 +55,6 @@ use crate::stream_events_utils::raw_assistant_output_text_from_item;
 use crate::stream_events_utils::record_completed_response_item;
 use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
-use crate::tools::loaded_search_tools::LoadedSearchToolSource;
-use crate::tools::loaded_search_tools::collect_loaded_search_tool_specs;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::router::ToolRouterParams;
@@ -1044,7 +1042,7 @@ async fn run_sampling_request(
     skills_outcome: Option<&SkillLoadOutcome>,
     cancellation_token: CancellationToken,
 ) -> AgereResult<SamplingRequestResult> {
-    let router = built_tools(
+    let mut router = built_tools(
         sess.as_ref(),
         turn_context.as_ref(),
         &input,
@@ -1056,13 +1054,13 @@ async fn run_sampling_request(
 
     let base_instructions = sess.get_base_instructions().await;
 
-    let tool_runtime = ToolCallRuntime::new(
+    let mut tool_runtime = ToolCallRuntime::new(
         Arc::clone(&router),
         Arc::clone(&sess),
         Arc::clone(&turn_context),
         Arc::clone(&turn_diff_tracker),
     );
-    let _code_mode_worker = sess
+    let mut _code_mode_worker = sess
         .services
         .code_mode_service
         .start_turn_worker(
@@ -1076,6 +1074,7 @@ async fn run_sampling_request(
     let mut rate_limit_retries: u32 = 0;
     let mut consecutive_429: u32 = 0;
     let mut initial_input = Some(input);
+    let mut tool_search_loaded_tools = false;
     loop {
         let prompt_input = if let Some(input) = initial_input.take() {
             input
@@ -1084,6 +1083,34 @@ async fn run_sampling_request(
                 .await
                 .for_prompt(&turn_context.model_info.input_modalities)
         };
+        if tool_search_loaded_tools {
+            router = built_tools(
+                sess.as_ref(),
+                turn_context.as_ref(),
+                &prompt_input,
+                explicitly_enabled_connectors,
+                skills_outcome,
+                &cancellation_token,
+            )
+            .await?;
+            tool_runtime = ToolCallRuntime::new(
+                Arc::clone(&router),
+                Arc::clone(&sess),
+                Arc::clone(&turn_context),
+                Arc::clone(&turn_diff_tracker),
+            );
+            _code_mode_worker = sess
+                .services
+                .code_mode_service
+                .start_turn_worker(
+                    &sess,
+                    &turn_context,
+                    Arc::clone(&router),
+                    Arc::clone(&turn_diff_tracker),
+                )
+                .await;
+            tool_search_loaded_tools = false;
+        }
         let prompt = build_prompt(
             prompt_input,
             router.as_ref(),
@@ -1102,29 +1129,32 @@ async fn run_sampling_request(
         )
         .await
         {
-            Ok(output) => {
-                return Ok(output);
-            }
-            Err(AgereErr::ContextWindowExceeded) => {
-                sess.set_total_tokens_full(&turn_context).await;
-                return Err(AgereErr::ContextWindowExceeded);
-            }
-            Err(AgereErr::UsageLimitReached(e)) => {
-                let rate_limits = e.rate_limits.clone();
-                if let Some(rate_limits) = rate_limits {
-                    sess.update_rate_limits(&turn_context, *rate_limits).await;
+            Ok(output) => return Ok(output),
+            Err(failure) => {
+                tool_search_loaded_tools |= failure.tool_search_loaded_tools;
+                match failure.error {
+                    AgereErr::ContextWindowExceeded => {
+                        sess.set_total_tokens_full(&turn_context).await;
+                        return Err(AgereErr::ContextWindowExceeded);
+                    }
+                    AgereErr::UsageLimitReached(e) => {
+                        let rate_limits = e.rate_limits.clone();
+                        if let Some(rate_limits) = rate_limits {
+                            sess.update_rate_limits(&turn_context, *rate_limits).await;
+                        }
+                        return Err(AgereErr::UsageLimitReached(e));
+                    }
+                    AgereErr::RateLimited(e) => {
+                        let cfg = turn_context.config.rate_limit_retry.clone();
+                        if !cfg.enabled {
+                            return Err(AgereErr::RateLimited(e));
+                        }
+                        consecutive_429 = consecutive_429.saturating_add(1);
+                        AgereErr::RateLimited(e)
+                    }
+                    err => err,
                 }
-                return Err(AgereErr::UsageLimitReached(e));
             }
-            Err(AgereErr::RateLimited(e)) => {
-                let cfg = turn_context.config.rate_limit_retry.clone();
-                if !cfg.enabled {
-                    return Err(AgereErr::RateLimited(e));
-                }
-                consecutive_429 = consecutive_429.saturating_add(1);
-                AgereErr::RateLimited(e)
-            }
-            Err(err) => err,
         };
         if !matches!(err, AgereErr::RateLimited(_)) {
             consecutive_429 = 0;
@@ -1375,13 +1405,7 @@ pub(crate) async fn built_tools(
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
-            loaded_search_tool_specs: collect_loaded_search_tool_specs(
-                input,
-                &[
-                    LoadedSearchToolSource::ToolSearchOutputs,
-                    LoadedSearchToolSource::FlatToolSearchFunctionOutputs,
-                ],
-            ),
+            history_input: input,
         },
     )))
 }
@@ -1390,6 +1414,21 @@ pub(crate) async fn built_tools(
 struct SamplingRequestResult {
     needs_follow_up: bool,
     last_agent_message: Option<String>,
+}
+
+#[derive(Debug)]
+struct SamplingRequestError {
+    error: AgereErr,
+    tool_search_loaded_tools: bool,
+}
+
+impl SamplingRequestError {
+    fn new(error: AgereErr, tool_search_loaded_tools: bool) -> Self {
+        Self {
+            error,
+            tool_search_loaded_tools,
+        }
+    }
 }
 
 /// Ephemeral per-response state for streaming a single proposed plan.
@@ -1933,11 +1972,19 @@ async fn drain_in_flight(
     in_flight: &mut FuturesOrdered<BoxFuture<'static, AgereResult<ResponseInputItem>>>,
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-) -> AgereResult<()> {
+    tool_runtime: ToolCallRuntime,
+) -> AgereResult<bool> {
+    let mut tool_search_loaded_tools = false;
     while let Some(res) = in_flight.next().await {
         match res {
             Ok(response_input) => {
-                let response_item = response_input.into();
+                let response_item = tool_runtime.normalize_history_item(response_input.into());
+                if matches!(
+                    &response_item,
+                    ResponseItem::ToolSearchOutput { tools, .. } if !tools.is_empty()
+                ) {
+                    tool_search_loaded_tools = true;
+                }
                 sess.record_conversation_items(&turn_context, std::slice::from_ref(&response_item))
                     .await;
                 mark_thread_memory_mode_polluted_if_external_context(
@@ -1952,7 +1999,7 @@ async fn drain_in_flight(
             }
         }
     }
-    Ok(())
+    Ok(tool_search_loaded_tools)
 }
 
 async fn flush_provisional_completions(
@@ -1984,7 +2031,7 @@ async fn try_run_sampling_request(
     turn_diff_tracker: SharedTurnDiffTracker,
     prompt: &Prompt,
     cancellation_token: CancellationToken,
-) -> AgereResult<SamplingRequestResult> {
+) -> Result<SamplingRequestResult, SamplingRequestError> {
     feedback_tags!(
         model = turn_context.model_info.slug.clone(),
         approval_policy = turn_context.approval_policy.value(),
@@ -2012,7 +2059,9 @@ async fn try_run_sampling_request(
         )
         .instrument(trace_span!("stream_request"))
         .or_cancel(&cancellation_token)
-        .await??;
+        .await
+        .map_err(|_| SamplingRequestError::new(AgereErr::TurnAborted, false))?
+        .map_err(|err| SamplingRequestError::new(err, false))?;
     let mut in_flight: FuturesOrdered<BoxFuture<'static, AgereResult<ResponseInputItem>>> =
         FuturesOrdered::new();
     let mut needs_follow_up = false;
@@ -2455,10 +2504,20 @@ async fn try_run_sampling_request(
     )
     .await;
 
-    drain_in_flight(&mut in_flight, sess.clone(), turn_context.clone()).await?;
+    let tool_search_loaded_tools = drain_in_flight(
+        &mut in_flight,
+        sess.clone(),
+        turn_context.clone(),
+        tool_runtime.clone(),
+    )
+    .await
+    .map_err(|err| SamplingRequestError::new(err, false))?;
 
     if cancellation_token.is_cancelled() {
-        return Err(AgereErr::TurnAborted);
+        return Err(SamplingRequestError::new(
+            AgereErr::TurnAborted,
+            tool_search_loaded_tools,
+        ));
     }
 
     if should_emit_turn_diff {
@@ -2472,7 +2531,7 @@ async fn try_run_sampling_request(
         }
     }
 
-    outcome
+    outcome.map_err(|err| SamplingRequestError::new(err, tool_search_loaded_tools))
 }
 
 pub(crate) fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -> Option<String> {
@@ -2579,5 +2638,187 @@ mod retry_tests {
         assert!(should_try_fallback_transport(
             &err, /*retries*/ 2, /*max_retries*/ 2,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tool_search_refresh_tests {
+    use super::run_sampling_request;
+    use crate::session::tests::make_session_and_context_with_auth_and_config_and_rx;
+    use crate::turn_diff_tracker::TurnDiffTracker;
+    use agere_features::Feature;
+    use agere_login::AgereAuth;
+    use agere_model_provider_info::WireApi;
+    use agere_models_manager::bundled_models_response;
+    use agere_protocol::dynamic_tools::DynamicToolSpec;
+    use agere_protocol::models::ContentItem;
+    use agere_protocol::models::ResponseItem;
+    use core_test_support::responses::ev_assistant_message;
+    use core_test_support::responses::ev_completed;
+    use core_test_support::responses::ev_response_created;
+    use core_test_support::responses::ev_tool_search_call;
+    use core_test_support::responses::mount_sse_sequence;
+    use core_test_support::responses::sse;
+    use core_test_support::responses::start_mock_server;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refreshes_code_mode_worker_after_current_turn_tool_search() -> anyhow::Result<()> {
+        let server = start_mock_server().await;
+        let tool_name = "automation_update";
+        let dynamic_tool = DynamicToolSpec {
+            namespace: Some("agere_app".to_string()),
+            name: tool_name.to_string(),
+            description: "Create or update automations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "mode": { "type": "string" },
+                },
+                "required": ["mode"],
+                "additionalProperties": false,
+            }),
+            defer_loading: true,
+        };
+        let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+            AgereAuth::from_api_key("Test API Key"),
+            vec![dynamic_tool],
+            |config| {
+                let mut provider = config.model_provider.clone();
+                provider.base_url = Some(format!("{}/v1", server.uri()));
+                provider.wire_api = WireApi::Responses;
+                provider.supports_websockets = false;
+                provider.request_max_retries = Some(0);
+                provider.stream_max_retries = Some(1);
+                config.model_provider = provider;
+                let _ = config.features.enable(Feature::CodeMode);
+                let _ = config.features.enable(Feature::ToolSearch);
+                let mut model_catalog = bundled_models_response()
+                    .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));
+                let model = model_catalog
+                    .models
+                    .iter_mut()
+                    .find(|model| model.slug == "gpt-5.4")
+                    .expect("gpt-5.4 exists in bundled models.json");
+                config.model = Some("gpt-5.4".to_string());
+                model.supports_search_tool = true;
+                config.model_catalog = Some(model_catalog);
+            },
+        )
+        .await;
+        let response_mock = mount_sse_sequence(
+            &server,
+            vec![
+                sse(vec![
+                    ev_response_created("resp-1"),
+                    ev_tool_search_call(
+                        "tool-search-1",
+                        &json!({
+                            "query": "automation_update",
+                            "limit": 8,
+                        }),
+                    ),
+                ]),
+                sse(vec![
+                    ev_response_created("resp-2"),
+                    ev_assistant_message("msg-1", "ready"),
+                    ev_completed("resp-2"),
+                ]),
+            ],
+        )
+        .await;
+        let mut client_session = session.services.model_client.new_session();
+        let input = vec![ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "Use the automation tool".to_string(),
+            }],
+            phase: None,
+        }];
+        let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+
+        let result = run_sampling_request(
+            Arc::clone(&session),
+            Arc::clone(&turn_context),
+            turn_diff_tracker,
+            &mut client_session,
+            /*turn_metadata_header*/ None,
+            input,
+            &HashSet::new(),
+            /*skills_outcome*/ None,
+            CancellationToken::new(),
+        )
+        .await?;
+
+        assert!(!result.needs_follow_up);
+        assert_eq!(result.last_agent_message, Some("ready".to_string()));
+        let requests = response_mock.requests();
+        assert_eq!(requests.len(), 2);
+        let second_request_tools = request_tool_names(&requests[1].body_json());
+        assert!(
+            second_request_tools
+                .iter()
+                .any(|name| name == "agere_app_automation_update"),
+            "retry request should advertise loaded dynamic tool: {second_request_tools:?}"
+        );
+        let worker_start_tool_names = session
+            .services
+            .code_mode_service
+            .worker_start_tool_names()
+            .await;
+        assert_eq!(worker_start_tool_names.len(), 2);
+        assert!(
+            !worker_start_tool_names[0]
+                .iter()
+                .any(|name| name == "agere_app_automation_update"),
+            "initial code-mode worker should not see deferred dynamic tool: {worker_start_tool_names:?}"
+        );
+        assert!(
+            worker_start_tool_names[1]
+                .iter()
+                .any(|name| name == "agere_app_automation_update"),
+            "refreshed code-mode worker should see loaded dynamic tool: {worker_start_tool_names:?}"
+        );
+
+        Ok(())
+    }
+
+    fn request_tool_names(body: &serde_json::Value) -> Vec<String> {
+        body.get("tools")
+            .and_then(serde_json::Value::as_array)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .flat_map(|tool| {
+                        let top_level = tool
+                            .get("name")
+                            .or_else(|| tool.get("type"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string);
+                        let namespace_tools = tool
+                            .get("tools")
+                            .and_then(serde_json::Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|nested_tool| {
+                                let namespace = tool
+                                    .get("name")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or_default();
+                                nested_tool
+                                    .get("name")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(|name| format!("{namespace}_{name}"))
+                            });
+                        top_level.into_iter().chain(namespace_tools)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

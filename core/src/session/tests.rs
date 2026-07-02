@@ -93,6 +93,7 @@ use agere_protocol::config_types::CollaborationMode;
 use agere_protocol::config_types::ModeKind;
 use agere_protocol::config_types::Settings;
 use agere_protocol::config_types::WindowsExecutionRestrictionLevel;
+use agere_protocol::dynamic_tools::DynamicToolSpec;
 use agere_protocol::models::BaseInstructions;
 use agere_protocol::models::ContentItem;
 use agere_protocol::models::ResponseInputItem;
@@ -135,6 +136,7 @@ use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_completed_with_tokens;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_response_created;
+use core_test_support::responses::ev_tool_search_call;
 use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
@@ -509,7 +511,7 @@ fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> T
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
-            loaded_search_tool_specs: Vec::new(),
+            history_input: &[],
         },
     ));
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
@@ -5257,7 +5259,7 @@ async fn shutdown_and_wait_shuts_down_tracked_ephemeral_guardian_review() {
         .expect("ephemeral guardian review should receive a shutdown op");
 }
 
-async fn make_session_and_context_with_auth_and_config_and_rx<F>(
+pub(crate) async fn make_session_and_context_with_auth_and_config_and_rx<F>(
     auth: AgereAuth,
     dynamic_tools: Vec<DynamicToolSpec>,
     configure_config: F,
@@ -6361,27 +6363,20 @@ async fn handle_output_item_done_skips_image_save_message_when_save_fails() {
 
 #[tokio::test]
 async fn handle_output_item_done_records_tool_search_calls_as_provider_neutral_history() {
-    let (session, turn_context) = make_session_and_context().await;
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.tools_config.search_tool = true;
     let session = Arc::new(session);
     let turn_context = Arc::new(turn_context);
     let router = Arc::new(ToolRouter::from_config(
         &turn_context.tools_config,
         ToolRouterParams {
             mcp_tools: None,
-            deferred_mcp_tools: None,
+            deferred_mcp_tools: Some(HashMap::new()),
             unavailable_called_tools: Vec::new(),
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
-            loaded_search_tool_specs: vec![agere_tools::ToolSpec::ToolSearch {
-                execution: "client".to_string(),
-                description: "Search deferred tools".to_string(),
-                parameters: agere_tools::JsonSchema::object(
-                    Default::default(),
-                    None,
-                    Some(false.into()),
-                ),
-            }],
+            history_input: &[],
         },
     ));
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
@@ -6483,6 +6478,147 @@ async fn built_tools_includes_native_tool_search_outputs_for_namespace_providers
         None
     });
     assert_eq!(loaded_tool_names, Some(vec!["create_event".to_string()]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_refreshes_visible_tools_after_current_turn_tool_search() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let search_call_id = "tool-search-1";
+    let tool_name = "automation_update";
+    let tool_description = "Create or update automations.";
+    let input_schema = json!({
+        "type": "object",
+        "properties": {
+            "mode": { "type": "string" },
+        },
+        "required": ["mode"],
+        "additionalProperties": false,
+    });
+    let response_mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_tool_search_call(
+                    search_call_id,
+                    &json!({
+                        "query": "automation_update",
+                        "limit": 8,
+                    }),
+                ),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "ready"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let dynamic_tool = DynamicToolSpec {
+        namespace: Some("agere_app".to_string()),
+        name: tool_name.to_string(),
+        description: tool_description.to_string(),
+        input_schema,
+        defer_loading: true,
+    };
+    let mut builder = test_agere().with_config(|config| {
+        let mut provider = config.model_provider.clone();
+        provider.wire_api = WireApi::Responses;
+        provider.supports_websockets = false;
+        provider.request_max_retries = Some(0);
+        provider.stream_max_retries = Some(1);
+        config.model_provider = provider;
+        let _ = config.features.enable(Feature::CodeMode);
+    });
+    let base_test = builder.build(&server).await?;
+    let new_thread = base_test
+        .thread_manager
+        .start_thread_with_tools(
+            base_test.config.clone(),
+            vec![dynamic_tool],
+            /*persist_extended_history*/ false,
+        )
+        .await?;
+    let mut test = base_test;
+    test.agere = new_thread.thread;
+    test.session_configured = new_thread.session_configured;
+
+    test.agere
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "Use the automation tool".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+
+    wait_for_event(&test.agere, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let requests = response_mock.requests();
+    assert_eq!(requests.len(), 2);
+    let first_request_tools = request_tool_names(&requests[0].body_json());
+    assert!(
+        first_request_tools
+            .iter()
+            .any(|name| name == agere_tools::TOOL_SEARCH_TOOL_NAME),
+        "first request should advertise tool_search: {first_request_tools:?}"
+    );
+    assert!(
+        !first_request_tools.iter().any(|name| name == tool_name),
+        "deferred dynamic tool should be hidden before search: {first_request_tools:?}"
+    );
+
+    let second_request_tools = request_tool_names(&requests[1].body_json());
+    assert!(
+        second_request_tools
+            .iter()
+            .any(|name| name == "agere_app_automation_update"),
+        "retry request should advertise loaded dynamic tool: {second_request_tools:?}"
+    );
+
+    Ok(())
+}
+
+fn request_tool_names(body: &serde_json::Value) -> Vec<String> {
+    body.get("tools")
+        .and_then(serde_json::Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .flat_map(|tool| {
+                    let top_level = tool
+                        .get("name")
+                        .or_else(|| tool.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string);
+                    let namespace_tools = tool
+                        .get("tools")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|nested_tool| {
+                            let namespace = tool
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default();
+                            nested_tool
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .map(|name| format!("{namespace}_{name}"))
+                        });
+                    top_level.into_iter().chain(namespace_tools)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[tokio::test]
@@ -8784,7 +8920,7 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
-            loaded_search_tool_specs: Vec::new(),
+            history_input: &[],
         },
     );
     let item = ResponseItem::CustomToolCall {

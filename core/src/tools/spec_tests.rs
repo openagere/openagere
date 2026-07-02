@@ -459,7 +459,7 @@ async fn assert_model_tools(
             parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: &[],
-            loaded_search_tool_specs: Vec::new(),
+            history_input: &[],
         },
     );
     let model_visible_specs = router.model_visible_specs();

@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use agere_protocol::models::FunctionCallOutputBody;
 use agere_protocol::models::ResponseItem;
 use agere_protocol::models::SearchToolCallParams;
+use agere_tools::FlatWireFunctionToolKind;
+use agere_tools::FlatWireToolProjection;
 use agere_tools::LoadableToolSpec;
 use agere_tools::ResponsesApiNamespaceTool;
 use agere_tools::ToolName;
@@ -18,6 +20,7 @@ pub(crate) enum LoadedSearchToolSource {
 pub(crate) fn collect_loaded_search_tool_specs(
     input: &[ResponseItem],
     sources: &[LoadedSearchToolSource],
+    flat_wire_tool_specs: &[ToolSpec],
 ) -> Vec<ToolSpec> {
     let include_tool_search_outputs = sources
         .iter()
@@ -28,6 +31,8 @@ pub(crate) fn collect_loaded_search_tool_specs(
             LoadedSearchToolSource::FlatToolSearchFunctionOutputs
         )
     });
+    let flat_wire_projection = include_flat_tool_search_function_outputs
+        .then(|| FlatWireToolProjection::new(flat_wire_tool_specs));
     let flat_tool_search_call_ids = input
         .iter()
         .filter_map(|item| match item {
@@ -37,7 +42,7 @@ pub(crate) fn collect_loaded_search_tool_specs(
                 arguments,
                 call_id,
                 ..
-            } if name == agere_tools::TOOL_SEARCH_TOOL_NAME
+            } if is_flat_tool_search_function_name(name, flat_wire_projection.as_ref())
                 && serde_json::from_str::<SearchToolCallParams>(arguments).is_ok() =>
             {
                 Some(call_id.clone())
@@ -107,6 +112,19 @@ pub(crate) fn collect_loaded_search_tool_specs(
         .collect()
 }
 
+fn is_flat_tool_search_function_name(
+    name: &str,
+    projection: Option<&FlatWireToolProjection>,
+) -> bool {
+    if let Some(source_kind) =
+        projection.and_then(|projection| projection.source_kind_for_wire_name(name))
+    {
+        return source_kind == FlatWireFunctionToolKind::ToolSearch;
+    }
+
+    name == agere_tools::TOOL_SEARCH_TOOL_NAME
+}
+
 fn strip_defer_loading(spec: LoadableToolSpec) -> LoadableToolSpec {
     match spec {
         LoadableToolSpec::Function(mut tool) => {
@@ -156,8 +174,11 @@ mod tests {
             tools: vec![serde_json::to_value(tool).expect("serialize loadable tool")],
         }];
 
-        let specs =
-            collect_loaded_search_tool_specs(&input, &[LoadedSearchToolSource::ToolSearchOutputs]);
+        let specs = collect_loaded_search_tool_specs(
+            &input,
+            &[LoadedSearchToolSource::ToolSearchOutputs],
+            &[],
+        );
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].name(), "mcp__calendar__");
@@ -211,10 +232,82 @@ mod tests {
                 output: agere_protocol::models::FunctionCallOutputPayload::from_text(tools),
             },
         ];
+        let projection_specs = vec![tool_search_spec()];
 
         let specs = collect_loaded_search_tool_specs(
             &input,
             &[LoadedSearchToolSource::FlatToolSearchFunctionOutputs],
+            &projection_specs,
+        );
+
+        assert_eq!(
+            specs,
+            vec![ToolSpec::Namespace(ResponsesApiNamespace {
+                name: "mcp__calendar__".to_string(),
+                description: "Calendar tools".to_string(),
+                tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                    name: "create_event".to_string(),
+                    description: "Create an event".to_string(),
+                    strict: false,
+                    defer_loading: None,
+                    parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+                    output_schema: None,
+                })],
+            })]
+        );
+    }
+
+    #[test]
+    fn collects_loaded_tools_from_disambiguated_flat_tool_search_function_history() {
+        let projection_specs = vec![
+            ToolSpec::Function(ResponsesApiTool {
+                name: agere_tools::TOOL_SEARCH_TOOL_NAME.to_string(),
+                description: "Plain dynamic tool named tool_search".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+                output_schema: None,
+            }),
+            tool_search_spec(),
+        ];
+        let search_wire_name =
+            agere_tools::FlatWireToolProjection::new(&projection_specs).wire_name_for_tool_search();
+        let tools = serde_json::to_string(&vec![serde_json::json!({
+            "type": "namespace",
+            "name": "mcp__calendar__",
+            "description": "Calendar tools",
+            "tools": [{
+                "type": "function",
+                "name": "create_event",
+                "description": "Create an event",
+                "strict": false,
+                "defer_loading": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }
+            }]
+        })])
+        .expect("serialize tool search output");
+        let input = vec![
+            ResponseItem::FunctionCall {
+                id: None,
+                name: search_wire_name,
+                namespace: None,
+                arguments: r#"{"query":"calendar"}"#.to_string(),
+                call_id: "search-1".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "search-1".to_string(),
+                output: agere_protocol::models::FunctionCallOutputPayload::from_text(tools),
+            },
+        ];
+
+        let specs = collect_loaded_search_tool_specs(
+            &input,
+            &[LoadedSearchToolSource::FlatToolSearchFunctionOutputs],
+            &projection_specs,
         );
 
         assert_eq!(
@@ -268,8 +361,11 @@ mod tests {
             },
         ];
 
-        let specs =
-            collect_loaded_search_tool_specs(&input, &[LoadedSearchToolSource::ToolSearchOutputs]);
+        let specs = collect_loaded_search_tool_specs(
+            &input,
+            &[LoadedSearchToolSource::ToolSearchOutputs],
+            &[],
+        );
 
         assert_eq!(
             specs,
@@ -305,8 +401,17 @@ mod tests {
         let specs = collect_loaded_search_tool_specs(
             &input,
             &[LoadedSearchToolSource::FlatToolSearchFunctionOutputs],
+            &[],
         );
 
         assert_eq!(specs, Vec::new());
+    }
+
+    fn tool_search_spec() -> ToolSpec {
+        ToolSpec::ToolSearch {
+            execution: "client".to_string(),
+            description: "Search deferred tools".to_string(),
+            parameters: JsonSchema::object(Default::default(), None, Some(false.into())),
+        }
     }
 }
