@@ -296,7 +296,7 @@ async fn wait_for_fresh_wire_api_catalog(manager: &WireApiModelsManager) -> Wire
         loop {
             if let Some(catalog) = manager
                 .wire_api_catalog_cache
-                .load_fresh(WireApi::Responses)
+                .load(WireApi::Responses)
                 .await
             {
                 return catalog;
@@ -363,7 +363,7 @@ async fn wire_api_overlay_catalog_fetches_and_persists_when_cache_missing() {
     catalog_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
     let catalog_client = TestWireApiCatalogClient::new(vec![WireApiCatalog {
         etag: Some("\"wire-etag\"".to_string()),
-        catalog_version: Some("v1".to_string()),
+        version: Some("v1".to_string()),
         models: vec![CatalogModel::from(catalog_model.clone())],
     }]);
     let manager = openai_manager_for_tests_with_wire_api_catalog_client(
@@ -433,7 +433,6 @@ async fn list_models_applies_cached_wire_api_overlay() {
             WireApi::Responses,
             &[overlay],
             Some("\"wire-etag\"".to_string()),
-            crate::client_version_to_whole(),
             Some("v1".to_string()),
         )
         .await;
@@ -448,13 +447,13 @@ async fn list_models_applies_cached_wire_api_overlay() {
 }
 
 #[tokio::test]
-async fn wire_api_overlay_catalog_renews_stale_cache_after_not_modified() {
+async fn wire_api_overlay_catalog_refreshes_in_background_on_access() {
     let agere_home = tempdir().expect("temp dir");
     let mut catalog_model = remote_model("wire-api-cached-model", "Cached", /*priority*/ 0);
     catalog_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
     let catalog_client = TestWireApiCatalogClient::new(vec![WireApiCatalog {
         etag: Some("\"wire-etag\"".to_string()),
-        catalog_version: None,
+        version: None,
         models: Vec::new(),
     }]);
     let manager = openai_manager_for_tests_with_wire_api_catalog_client(
@@ -467,27 +466,13 @@ async fn wire_api_overlay_catalog_renews_stale_cache_after_not_modified() {
             WireApi::Responses,
             &[catalog_model.clone()],
             Some("\"wire-etag\"".to_string()),
-            crate::client_version_to_whole(),
             Some("v1".to_string()),
         )
         .await;
-    let cache_path = manager.wire_api_catalog_cache.path_for(WireApi::Responses);
-    let mut cache_json: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&cache_path).expect("wire api catalog cache should be readable"),
-    )
-    .expect("wire api catalog cache should parse");
-    cache_json["fetched_at"] =
-        serde_json::Value::String((Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
-    std::fs::write(
-        &cache_path,
-        serde_json::to_vec_pretty(&cache_json).expect("cache json should serialize"),
-    )
-    .expect("wire api catalog cache should be rewritable");
-
     let catalog = manager
         .wire_api_overlay_catalog()
         .await
-        .expect("stale catalog should be used after not modified");
+        .expect("cached catalog should be returned");
 
     assert_eq!(
         catalog.models,
@@ -496,17 +481,24 @@ async fn wire_api_overlay_catalog_renews_stale_cache_after_not_modified() {
     let _ = manager
         .raw_model_catalog(RefreshStrategy::OnlineIfUncached)
         .await;
-    assert_eq!(
-        wait_for_fresh_wire_api_catalog(&manager).await.models,
-        vec![CatalogModel::from(catalog_model)]
-    );
-    assert_eq!(catalog_client.fetch_count(), 1);
-
-    let cached_catalog = manager
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if catalog_client.fetch_count() >= 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background refresh should call fetch");
+    let refreshed_catalog = manager
         .wire_api_overlay_catalog()
         .await
-        .expect("renewed catalog should be fresh");
-    assert_eq!(cached_catalog.models.len(), 1);
+        .expect("catalog should still be available after refresh");
+    assert_eq!(
+        refreshed_catalog.models,
+        vec![CatalogModel::from(catalog_model)]
+    );
     assert_eq!(catalog_client.fetch_count(), 1);
 }
 
@@ -669,18 +661,14 @@ async fn static_manager_get_model_info_applies_cached_wire_api_overlay() {
     overlay_model.context_window = Some(123);
     overlay_model.max_context_window = Some(123);
     overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
-    WireApiCatalogCache::new(
-        agere_home.path().to_path_buf(),
-        std::time::Duration::from_secs(300),
-    )
-    .persist(
-        WireApi::Anthropic,
-        &[overlay_model],
-        None,
-        crate::client_version_to_whole(),
-        Some("test".to_string()),
-    )
-    .await;
+    WireApiCatalogCache::new(agere_home.path().to_path_buf())
+        .persist(
+            WireApi::Anthropic,
+            &[overlay_model],
+            None,
+            Some("test".to_string()),
+        )
+        .await;
 
     let manager = static_manager_for_tests_with_wire_api_cache(
         ModelsResponse {
@@ -707,18 +695,14 @@ async fn static_manager_get_model_info_preserves_explicit_provider_modalities() 
 
     let mut overlay_model = remote_model("qwen3.7-plus", "Catalog Qwen", /*priority*/ 99);
     overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
-    WireApiCatalogCache::new(
-        agere_home.path().to_path_buf(),
-        std::time::Duration::from_secs(300),
-    )
-    .persist(
-        WireApi::Anthropic,
-        &[overlay_model],
-        None,
-        crate::client_version_to_whole(),
-        Some("test".to_string()),
-    )
-    .await;
+    WireApiCatalogCache::new(agere_home.path().to_path_buf())
+        .persist(
+            WireApi::Anthropic,
+            &[overlay_model],
+            None,
+            Some("test".to_string()),
+        )
+        .await;
 
     let manager = static_manager_for_tests_with_wire_api_cache(
         ModelsResponse {
@@ -746,18 +730,14 @@ async fn static_manager_list_models_applies_cached_wire_api_overlay() {
         input_modalities: Some(vec![InputModality::Text, InputModality::Image]),
         ..remote_model("qwen3.7-plus", "Catalog Qwen", /*priority*/ 99)
     };
-    WireApiCatalogCache::new(
-        agere_home.path().to_path_buf(),
-        std::time::Duration::from_secs(300),
-    )
-    .persist(
-        WireApi::Anthropic,
-        &[overlay_model],
-        None,
-        crate::client_version_to_whole(),
-        Some("test".to_string()),
-    )
-    .await;
+    WireApiCatalogCache::new(agere_home.path().to_path_buf())
+        .persist(
+            WireApi::Anthropic,
+            &[overlay_model],
+            None,
+            Some("test".to_string()),
+        )
+        .await;
 
     let manager = static_manager_for_tests_with_wire_api_cache(
         ModelsResponse {
@@ -792,18 +772,14 @@ async fn static_manager_try_list_models_applies_cached_wire_api_overlay() {
         input_modalities: Some(vec![InputModality::Text, InputModality::Image]),
         ..remote_model("qwen3.7-plus", "Catalog Qwen", /*priority*/ 99)
     };
-    WireApiCatalogCache::new(
-        agere_home.path().to_path_buf(),
-        std::time::Duration::from_secs(300),
-    )
-    .persist(
-        WireApi::Anthropic,
-        &[overlay_model],
-        None,
-        crate::client_version_to_whole(),
-        Some("test".to_string()),
-    )
-    .await;
+    WireApiCatalogCache::new(agere_home.path().to_path_buf())
+        .persist(
+            WireApi::Anthropic,
+            &[overlay_model],
+            None,
+            Some("test".to_string()),
+        )
+        .await;
 
     let manager = static_manager_for_tests_with_wire_api_cache(
         ModelsResponse {

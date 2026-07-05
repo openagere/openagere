@@ -1,14 +1,11 @@
 use crate::catalog_overlay::CatalogModel;
 use agere_model_provider_info::WireApi;
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs as std_fs;
 use std::io;
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use std::time::Duration;
 use tokio::fs as tokio_fs;
 use tracing::error;
 use tracing::info;
@@ -16,32 +13,28 @@ use tracing::info;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WireApiCatalog {
     pub(crate) etag: Option<String>,
-    pub(crate) catalog_version: Option<String>,
+    pub(crate) version: Option<String>,
     pub(crate) models: Vec<CatalogModel>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct WireApiCatalogCache {
     agere_home: PathBuf,
-    ttl: Duration,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WireApiCatalogEnvelope {
     wire_api: WireApi,
-    fetched_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    client_version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    catalog_version: Option<String>,
+    #[serde(default)]
+    version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     etag: Option<String>,
     models: Vec<CatalogModel>,
 }
 
 impl WireApiCatalogCache {
-    pub(crate) fn new(agere_home: PathBuf, ttl: Duration) -> Self {
-        Self { agere_home, ttl }
+    pub(crate) fn new(agere_home: PathBuf) -> Self {
+        Self { agere_home }
     }
 
     pub(crate) fn path_for(&self, wire_api: WireApi) -> PathBuf {
@@ -50,42 +43,15 @@ impl WireApiCatalogCache {
             .join(format!("{wire_api}.json"))
     }
 
-    pub(crate) async fn load_fresh(&self, wire_api: WireApi) -> Option<WireApiCatalog> {
-        let envelope = self.load_envelope(wire_api).await?;
-        if !matches_current_client_version(envelope.client_version.as_deref()) {
-            return None;
-        }
-        if !is_fresh(envelope.fetched_at, self.ttl) {
-            return None;
-        }
-        Some(envelope.into_catalog())
+    pub(crate) async fn load(&self, wire_api: WireApi) -> Option<WireApiCatalog> {
+        self.load_envelope(wire_api)
+            .await
+            .map(WireApiCatalogEnvelope::into_catalog)
     }
 
-    pub(crate) fn load_fresh_sync(&self, wire_api: WireApi) -> Option<WireApiCatalog> {
-        let envelope = self.load_envelope_sync(wire_api)?;
-        if !matches_current_client_version(envelope.client_version.as_deref()) {
-            return None;
-        }
-        if !is_fresh(envelope.fetched_at, self.ttl) {
-            return None;
-        }
-        Some(envelope.into_catalog())
-    }
-
-    pub(crate) async fn load_stale(&self, wire_api: WireApi) -> Option<WireApiCatalog> {
-        let envelope = self.load_envelope(wire_api).await?;
-        if !matches_current_client_version(envelope.client_version.as_deref()) {
-            return None;
-        }
-        Some(envelope.into_catalog())
-    }
-
-    pub(crate) fn load_stale_sync(&self, wire_api: WireApi) -> Option<WireApiCatalog> {
-        let envelope = self.load_envelope_sync(wire_api)?;
-        if !matches_current_client_version(envelope.client_version.as_deref()) {
-            return None;
-        }
-        Some(envelope.into_catalog())
+    pub(crate) fn load_sync(&self, wire_api: WireApi) -> Option<WireApiCatalog> {
+        self.load_envelope_sync(wire_api)
+            .map(WireApiCatalogEnvelope::into_catalog)
     }
 
     pub(crate) async fn persist<M>(
@@ -93,17 +59,14 @@ impl WireApiCatalogCache {
         wire_api: WireApi,
         models: &[M],
         etag: Option<String>,
-        client_version: String,
-        catalog_version: Option<String>,
+        version: Option<String>,
     ) where
         M: Clone,
         CatalogModel: From<M>,
     {
         let envelope = WireApiCatalogEnvelope {
             wire_api,
-            fetched_at: Utc::now(),
-            client_version: Some(client_version),
-            catalog_version,
+            version: version.unwrap_or_default(),
             etag,
             models: models.iter().cloned().map(CatalogModel::from).collect(),
         };
@@ -197,24 +160,10 @@ impl WireApiCatalogEnvelope {
     fn into_catalog(self) -> WireApiCatalog {
         WireApiCatalog {
             etag: self.etag,
-            catalog_version: self.catalog_version,
+            version: Some(self.version).filter(|v| !v.is_empty()),
             models: self.models,
         }
     }
-}
-
-fn is_fresh(fetched_at: DateTime<Utc>, ttl: Duration) -> bool {
-    if ttl.is_zero() {
-        return false;
-    }
-    let Ok(ttl_duration) = chrono::Duration::from_std(ttl) else {
-        return false;
-    };
-    Utc::now().signed_duration_since(fetched_at) <= ttl_duration
-}
-
-fn matches_current_client_version(client_version: Option<&str>) -> bool {
-    client_version == Some(crate::client_version_to_whole().as_str())
 }
 
 #[cfg(test)]
@@ -235,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn cache_path_is_keyed_by_wire_api_only() {
         let home = tempdir().expect("tempdir");
-        let cache = WireApiCatalogCache::new(home.path().to_path_buf(), Duration::from_secs(300));
+        let cache = WireApiCatalogCache::new(home.path().to_path_buf());
 
         assert_eq!(
             cache.path_for(WireApi::Responses),
@@ -248,57 +197,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_fresh_rejects_wrong_wire_api() {
+    async fn load_rejects_wrong_wire_api() {
         let home = tempdir().expect("tempdir");
-        let cache = WireApiCatalogCache::new(home.path().to_path_buf(), Duration::from_secs(300));
+        let cache = WireApiCatalogCache::new(home.path().to_path_buf());
         cache
             .persist(
                 WireApi::Responses,
                 &[model("shared-model")],
                 Some("\"etag\"".to_string()),
-                crate::client_version_to_whole(),
                 Some("v1".to_string()),
             )
             .await;
 
-        assert_eq!(cache.load_fresh(WireApi::Anthropic).await, None);
+        assert_eq!(cache.load(WireApi::Anthropic).await, None);
     }
 
     #[tokio::test]
-    async fn load_fresh_rejects_wrong_client_version() {
+    async fn load_always_returns_cache_regardless_of_version() {
         let home = tempdir().expect("tempdir");
-        let cache = WireApiCatalogCache::new(home.path().to_path_buf(), Duration::from_secs(300));
+        let cache = WireApiCatalogCache::new(home.path().to_path_buf());
         cache
             .persist(
                 WireApi::Responses,
                 &[model("versioned-model")],
                 Some("\"etag\"".to_string()),
-                "0.0.0".to_string(),
                 Some("v1".to_string()),
             )
             .await;
 
-        assert_eq!(cache.load_fresh(WireApi::Responses).await, None);
+        assert!(cache.load(WireApi::Responses).await.is_some());
     }
 
     #[tokio::test]
-    async fn load_stale_keeps_expired_catalog_available() {
+    async fn load_returns_catalog() {
         let home = tempdir().expect("tempdir");
-        let cache = WireApiCatalogCache::new(home.path().to_path_buf(), Duration::ZERO);
+        let cache = WireApiCatalogCache::new(home.path().to_path_buf());
         cache
-            .persist(
-                WireApi::Chat,
-                &[model("chat-model")],
-                None,
-                crate::client_version_to_whole(),
-                None,
-            )
+            .persist(WireApi::Chat, &[model("chat-model")], None, None)
             .await;
 
-        assert_eq!(cache.load_fresh(WireApi::Chat).await, None);
         assert_eq!(
             cache
-                .load_stale(WireApi::Chat)
+                .load(WireApi::Chat)
                 .await
                 .expect("stale catalog")
                 .models
@@ -312,14 +252,13 @@ mod tests {
     #[tokio::test]
     async fn persist_replaces_existing_cache_file() {
         let home = tempdir().expect("tempdir");
-        let cache = WireApiCatalogCache::new(home.path().to_path_buf(), Duration::from_secs(300));
+        let cache = WireApiCatalogCache::new(home.path().to_path_buf());
 
         cache
             .persist(
                 WireApi::Responses,
                 &[model("old-model")],
                 None,
-                crate::client_version_to_whole(),
                 Some("old".to_string()),
             )
             .await;
@@ -328,17 +267,16 @@ mod tests {
                 WireApi::Responses,
                 &[model("new-model")],
                 None,
-                crate::client_version_to_whole(),
                 Some("new".to_string()),
             )
             .await;
 
         let catalog = cache
-            .load_fresh(WireApi::Responses)
+            .load(WireApi::Responses)
             .await
             .expect("fresh catalog should load after replacement");
 
-        assert_eq!(catalog.catalog_version, Some("new".to_string()));
+        assert_eq!(catalog.version, Some("new".to_string()));
         assert_eq!(
             catalog
                 .models
@@ -352,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn persist_writes_slim_catalog_models_without_display_or_context() {
         let home = tempdir().expect("tempdir");
-        let cache = WireApiCatalogCache::new(home.path().to_path_buf(), Duration::from_secs(300));
+        let cache = WireApiCatalogCache::new(home.path().to_path_buf());
         let mut cached_model = model("slim-model");
         cached_model.display_name = "Should not be persisted".to_string();
         cached_model.context_window = Some(123_456);
@@ -362,7 +300,6 @@ mod tests {
                 WireApi::Responses,
                 &[cached_model],
                 None,
-                crate::client_version_to_whole(),
                 Some("slim".to_string()),
             )
             .await;

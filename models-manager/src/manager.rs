@@ -275,7 +275,7 @@ impl WireApiModelsManager {
     ) -> Self {
         let cache_path = agere_home.join(MODEL_CACHE_FILE);
         let cache_manager = ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL);
-        let wire_api_catalog_cache = WireApiCatalogCache::new(agere_home, DEFAULT_MODEL_CACHE_TTL);
+        let wire_api_catalog_cache = WireApiCatalogCache::new(agere_home);
         let remote_models = load_remote_models_from_file().unwrap_or_default();
         Self {
             remote_models: RwLock::new(remote_models),
@@ -323,10 +323,7 @@ impl StaticModelsManager {
             model_catalog,
             collaboration_modes_config,
             wire_api,
-            Some(WireApiCatalogCache::new(
-                agere_home,
-                DEFAULT_MODEL_CACHE_TTL,
-            )),
+            Some(WireApiCatalogCache::new(agere_home)),
         )
     }
 
@@ -391,14 +388,8 @@ impl ModelsManager for WireApiModelsManager {
     }
 
     async fn wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
-        if let Some(catalog) = self.wire_api_catalog_cache.load_fresh(self.wire_api).await {
-            return Some(CatalogOverlay {
-                models: catalog.models,
-            });
-        }
-
         self.wire_api_catalog_cache
-            .load_stale(self.wire_api)
+            .load(self.wire_api)
             .await
             .map(|catalog| CatalogOverlay {
                 models: catalog.models,
@@ -406,14 +397,8 @@ impl ModelsManager for WireApiModelsManager {
     }
 
     fn try_wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
-        if let Some(catalog) = self.wire_api_catalog_cache.load_fresh_sync(self.wire_api) {
-            return Some(CatalogOverlay {
-                models: catalog.models,
-            });
-        }
-
         self.wire_api_catalog_cache
-            .load_stale_sync(self.wire_api)
+            .load_sync(self.wire_api)
             .map(|catalog| CatalogOverlay {
                 models: catalog.models,
             })
@@ -435,17 +420,7 @@ impl ModelsManager for WireApiModelsManager {
 
 impl WireApiModelsManager {
     async fn refresh_wire_api_overlay_catalog_in_background(&self) {
-        if self
-            .wire_api_catalog_cache
-            .load_fresh(self.wire_api)
-            .await
-            .is_some()
-        {
-            return;
-        }
-
-        let stale_catalog = self.wire_api_catalog_cache.load_stale(self.wire_api).await;
-        let client_version = crate::client_version_to_whole();
+        let existing_catalog = self.wire_api_catalog_cache.load(self.wire_api).await;
         if self
             .wire_api_catalog_refresh_inflight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -455,9 +430,10 @@ impl WireApiModelsManager {
             let wire_api_catalog_cache = self.wire_api_catalog_cache.clone();
             let wire_api_catalog_client = Arc::clone(&self.wire_api_catalog_client);
             let refresh_inflight = Arc::clone(&self.wire_api_catalog_refresh_inflight);
-            let stale_catalog_for_refresh = stale_catalog;
+            let existing_catalog_for_refresh = existing_catalog;
+            let client_version = crate::client_version_to_whole();
             tokio::spawn(async move {
-                let etag = stale_catalog_for_refresh
+                let etag = existing_catalog_for_refresh
                     .as_ref()
                     .and_then(|catalog| catalog.etag.as_deref());
                 match wire_api_catalog_client
@@ -465,14 +441,13 @@ impl WireApiModelsManager {
                     .await
                 {
                     Ok(catalog) if catalog.models.is_empty() => {
-                        if let Some(stale_catalog) = stale_catalog_for_refresh {
+                        if let Some(existing_catalog) = existing_catalog_for_refresh {
                             wire_api_catalog_cache
                                 .persist(
                                     wire_api,
-                                    &stale_catalog.models,
-                                    catalog.etag.or(stale_catalog.etag.clone()),
-                                    client_version,
-                                    stale_catalog.catalog_version.clone(),
+                                    &existing_catalog.models,
+                                    catalog.etag.or(existing_catalog.etag.clone()),
+                                    existing_catalog.version.clone(),
                                 )
                                 .await;
                         }
@@ -483,8 +458,7 @@ impl WireApiModelsManager {
                                 wire_api,
                                 &catalog.models,
                                 catalog.etag.clone(),
-                                client_version,
-                                catalog.catalog_version,
+                                catalog.version,
                             )
                             .await;
                     }
@@ -637,14 +611,8 @@ impl ModelsManager for StaticModelsManager {
 
     async fn wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
         let cache = self.wire_api_catalog_cache.as_ref()?;
-        if let Some(catalog) = cache.load_fresh(self.wire_api).await {
-            return Some(CatalogOverlay {
-                models: catalog.models,
-            });
-        }
-
         cache
-            .load_stale(self.wire_api)
+            .load(self.wire_api)
             .await
             .map(|catalog| CatalogOverlay {
                 models: catalog.models,
@@ -653,14 +621,8 @@ impl ModelsManager for StaticModelsManager {
 
     fn try_wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
         let cache = self.wire_api_catalog_cache.as_ref()?;
-        if let Some(catalog) = cache.load_fresh_sync(self.wire_api) {
-            return Some(CatalogOverlay {
-                models: catalog.models,
-            });
-        }
-
         cache
-            .load_stale_sync(self.wire_api)
+            .load_sync(self.wire_api)
             .map(|catalog| CatalogOverlay {
                 models: catalog.models,
             })

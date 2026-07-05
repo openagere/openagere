@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "agere-agent-identity"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "anyhow",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "agere-analytics"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-git-utils",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "agere-ansi-escape"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "ansi-to-tui",
  "ratatui",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "agere-anthropic-client"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "agere-client",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "agere-api"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-client",
  "agere-protocol",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "agere-app-server"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-analytics",
  "agere-api",
@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "agere-app-server-client"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server",
  "agere-app-server-protocol",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "agere-app-server-protocol"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-experimental-api-macros",
  "agere-protocol",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "agere-app-server-test-client"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-core",
@@ -515,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "agere-apply-patch"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-exec-server",
  "agere-utils-cargo-bin",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "agere-arg0"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-apply-patch",
  "agere-exec-server",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "agere-async-utils"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "async-trait",
  "pretty_assertions",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "agere-cli"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server",
  "agere-app-server-protocol",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "agere-client"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-utils-cargo-bin",
  "agere-utils-common",
@@ -637,7 +637,7 @@ dependencies = [
 
 [[package]]
 name = "agere-code-mode"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "async-channel",
@@ -652,7 +652,7 @@ dependencies = [
 
 [[package]]
 name = "agere-config"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-execpolicy",
@@ -698,7 +698,7 @@ dependencies = [
 
 [[package]]
 name = "agere-connectors"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "anyhow",
@@ -710,7 +710,7 @@ dependencies = [
 
 [[package]]
 name = "agere-core"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-analytics",
  "agere-anthropic-client",
@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "agere-core-plugins"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-config",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "agere-core-skills"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-analytics",
  "agere-app-server-protocol",
@@ -894,7 +894,7 @@ dependencies = [
 
 [[package]]
 name = "agere-debug-client"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "anyhow",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "agere-device-key"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -922,7 +922,7 @@ dependencies = [
 
 [[package]]
 name = "agere-exec"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-client",
  "agere-app-server-protocol",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "agere-exec-server"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-client",
@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "agere-execpolicy"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-utils-fs",
  "anyhow",
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "agere-execpolicy-legacy"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "allocative",
  "anyhow",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "agere-experimental-api-macros"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "agere-features"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-otel",
  "agere-protocol",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "agere-feedback"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-login",
  "agere-protocol",
@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "agere-file-search"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "clap",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "agere-file-system"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "agere-utils-fs",
@@ -1096,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "agere-git-utils"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-file-system",
  "agere-protocol",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "agere-hooks"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-config",
  "agere-plugin",
@@ -1140,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "agere-install-context"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-utils-fs",
  "pretty_assertions",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "agere-keyring-store"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "keyring",
  "tracing",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "agere-login"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-client",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "agere-mcp"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "agere-async-utils",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "agere-memories-read"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "agere-shell-command",
@@ -1226,7 +1226,7 @@ dependencies = [
 
 [[package]]
 name = "agere-memories-write"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-config",
  "agere-core",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "agere-model-provider"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "agere-client",
@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "agere-model-provider-info"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "agere-app-server-protocol",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "agere-models-manager"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-config",
@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "agere-network-proxy"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-utils-common",
  "agere-utils-fs",
@@ -1358,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "agere-openai-chat-client"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "agere-client",
@@ -1382,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "agere-otel"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "agere-app-server-protocol",
@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "agere-plugin"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-config",
  "agere-utils-fs",
@@ -1424,7 +1424,7 @@ dependencies = [
 
 [[package]]
 name = "agere-protocol"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-async-utils",
  "agere-execpolicy",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "agere-response-debug-context"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "base64 0.22.1",
@@ -1476,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "agere-rmcp-client"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-api",
  "agere-client",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "agere-rollout"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-file-search",
  "agere-git-utils",
@@ -1538,7 +1538,7 @@ dependencies = [
 
 [[package]]
 name = "agere-rollout-trace"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-code-mode",
  "agere-protocol",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "agere-secrets"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "age",
  "agere-git-utils",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "agere-shell-command"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "agere-utils-fs",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "agere-shell-escalation"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "agere-utils-fs",
@@ -1615,7 +1615,7 @@ dependencies = [
 
 [[package]]
 name = "agere-skills"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-utils-fs",
  "include_dir",
@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "agere-state"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-git-utils",
  "agere-protocol",
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "agere-stdio-to-uds"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-uds",
  "agere-utils-cargo-bin",
@@ -1659,7 +1659,7 @@ dependencies = [
 
 [[package]]
 name = "agere-test-binary-support"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-arg0",
  "tempfile",
@@ -1667,7 +1667,7 @@ dependencies = [
 
 [[package]]
 name = "agere-thread-store"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-git-utils",
  "agere-protocol",
@@ -1693,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "agere-tools"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-code-mode",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "agere-tui"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "aes-gcm",
  "agere-ansi-escape",
@@ -1812,7 +1812,7 @@ dependencies = [
 
 [[package]]
 name = "agere-uds"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "async-io",
  "pretty_assertions",
@@ -1824,14 +1824,14 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-approval-presets"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
 ]
 
 [[package]]
 name = "agere-utils-cache"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "lru 0.16.3",
  "sha1",
@@ -1840,7 +1840,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-cargo-bin"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "assert_cmd",
  "runfiles",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-cli"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "clap",
@@ -1860,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-common"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "pretty_assertions",
  "regex-lite",
@@ -1871,7 +1871,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-fs"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "dirs",
  "dunce",
@@ -1885,7 +1885,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-image"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-utils-cache",
  "base64 0.22.1",
@@ -1897,7 +1897,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-output-truncation"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-protocol",
  "agere-utils-common",
@@ -1906,7 +1906,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-plugins-placeholder"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-exec-server",
  "agere-login",
@@ -1919,7 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-pty"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "filedescriptor",
@@ -1935,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-readiness"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "assert_matches",
  "async-trait",
@@ -1946,7 +1946,7 @@ dependencies = [
 
 [[package]]
 name = "agere-utils-sleep-inhibitor"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "core-foundation 0.9.4",
  "libc",
@@ -2117,7 +2117,7 @@ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "app_test_support"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-app-server-protocol",
  "agere-config",
@@ -3610,7 +3610,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "core_test_support"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "agere-arg0",
  "agere-config",

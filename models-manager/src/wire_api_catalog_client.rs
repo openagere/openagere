@@ -32,7 +32,8 @@ pub(crate) struct OpenAgereWireApiCatalogClient {
 #[derive(Debug, Deserialize)]
 struct RemoteCatalogResponse {
     #[serde(default)]
-    catalog_version: Option<String>,
+    #[serde(alias = "catalog_version")]
+    version: Option<String>,
     #[serde(default)]
     models: Vec<CatalogModel>,
 }
@@ -78,7 +79,7 @@ impl WireApiCatalogClient for OpenAgereWireApiCatalogClient {
         if response.status() == http::StatusCode::NOT_MODIFIED {
             return Ok(WireApiCatalog {
                 etag: etag.map(str::to_string),
-                catalog_version: None,
+                version: None,
                 models: Vec::new(),
             });
         }
@@ -109,7 +110,7 @@ impl WireApiCatalogClient for OpenAgereWireApiCatalogClient {
         }
         Ok(WireApiCatalog {
             etag: response_etag,
-            catalog_version: body.catalog_version,
+            version: body.version,
             models: body.models,
         })
     }
@@ -135,7 +136,7 @@ mod tests {
             .and(path("/model-catalog"))
             .and(header("originator", originator.as_str()))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "catalog_version": "v1",
+                "version": "v1",
                 "models": [{
                     "slug": model.slug,
                     "input_modalities": ["text", "image"]
@@ -150,7 +151,7 @@ mod tests {
             .await
             .expect("fetch");
 
-        assert_eq!(catalog.catalog_version, Some("v1".to_string()));
+        assert_eq!(catalog.version, Some("v1".to_string()));
         assert_eq!(catalog.models[0].slug, "remote-catalog-model");
         assert_eq!(
             catalog.models[0].input_modalities,
