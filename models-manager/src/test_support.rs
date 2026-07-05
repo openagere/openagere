@@ -6,11 +6,13 @@ use std::sync::Arc;
 
 use crate::ModelsManagerConfig;
 use crate::bundled_models_response;
+use crate::catalog_overlay::CatalogOverlay;
 use crate::collaboration_mode_presets::CollaborationModesConfig;
 use crate::manager::SharedModelsManager;
 use crate::manager::StaticModelsManager;
 use crate::manager::construct_model_info_from_candidates;
 use crate::model_info::model_info_from_slug;
+use agere_model_provider_info::WireApi;
 use agere_protocol::openai_models::ModelInfo;
 use agere_protocol::openai_models::ModelPreset;
 use agere_protocol::openai_models::ModelsResponse;
@@ -27,6 +29,7 @@ pub fn static_manager_with_models(slugs: &[&str]) -> SharedModelsManager {
         /*auth_manager*/ None,
         ModelsResponse { models },
         CollaborationModesConfig::default(),
+        WireApi::Responses,
     ))
 }
 
@@ -36,7 +39,7 @@ pub fn get_model_offline_for_tests(model: Option<&str>) -> String {
         return model.to_string();
     }
     let mut response = bundled_models_response().unwrap_or_default();
-    response.models.sort_by(|a, b| a.priority.cmp(&b.priority));
+    response.models.sort_by_key(|a| a.priority);
     let presets: Vec<ModelPreset> = response.models.into_iter().map(Into::into).collect();
     presets
         .iter()
@@ -56,5 +59,12 @@ pub fn construct_model_info_offline_for_tests(
     } else {
         &[]
     };
-    construct_model_info_from_candidates(model, candidates, config)
+    let wire_api_catalog: Option<CatalogOverlay> = None;
+    construct_model_info_from_candidates(
+        model,
+        candidates,
+        config,
+        WireApi::Responses,
+        wire_api_catalog,
+    )
 }

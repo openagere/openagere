@@ -9,7 +9,6 @@ use agere_api::Provider as ApiProvider;
 use agere_api::RetryConfig as ApiRetryConfig;
 use agere_api::is_azure_responses_provider;
 use agere_app_server_protocol::AuthMode;
-use agere_protocol::config_types::ModelProviderAuthInfo;
 use agere_protocol::error::AgereErr;
 use agere_protocol::error::EnvVarError;
 use agere_protocol::error::Result as AgereResult;
@@ -86,6 +85,11 @@ impl<'de> Deserialize<'de> for WireApi {
     }
 }
 
+/// Hidden placeholder used only to reject unsupported provider auth config with a clear error.
+#[doc(hidden)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct UnsupportedModelProviderAuthInfo {}
+
 /// Serializable representation of a provider definition.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -103,8 +107,10 @@ pub struct ModelProviderInfo {
     /// this may be necessary when using this programmatically.
     #[serde(default)]
     pub experimental_bearer_token: Option<String>,
-    /// Command-backed bearer-token configuration for this provider.
-    pub auth: Option<ModelProviderAuthInfo>,
+    /// Unsupported command-backed bearer-token configuration for this provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub auth: Option<UnsupportedModelProviderAuthInfo>,
     /// AWS SigV4 auth configuration for this provider.
     pub aws: Option<ModelProviderAwsAuthInfo>,
     /// Which wire protocol this provider expects.
@@ -153,6 +159,13 @@ pub struct ModelProviderAwsAuthInfo {
 
 impl ModelProviderInfo {
     pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.auth.is_some() {
+            return Err(
+                "provider auth is not supported; use env_key or experimental_bearer_token"
+                    .to_string(),
+            );
+        }
+
         if self.aws.is_some() {
             if self.supports_websockets {
                 // TODO(celia-oai): Support AWS SigV4 signing for WebSocket
@@ -168,9 +181,6 @@ impl ModelProviderInfo {
             if self.experimental_bearer_token.is_some() {
                 conflicts.push("experimental_bearer_token");
             }
-            if self.auth.is_some() {
-                conflicts.push("auth");
-            }
             if self.requires_provider_auth {
                 conflicts.push("requires_provider_auth");
             }
@@ -183,33 +193,7 @@ impl ModelProviderInfo {
             }
         }
 
-        let Some(auth) = self.auth.as_ref() else {
-            return Ok(());
-        };
-
-        if auth.command.trim().is_empty() {
-            return Err("provider auth.command must not be empty".to_string());
-        }
-
-        let mut conflicts = Vec::new();
-        if self.env_key.is_some() {
-            conflicts.push("env_key");
-        }
-        if self.experimental_bearer_token.is_some() {
-            conflicts.push("experimental_bearer_token");
-        }
-        if self.requires_provider_auth {
-            conflicts.push("requires_provider_auth");
-        }
-
-        if conflicts.is_empty() {
-            Ok(())
-        } else {
-            Err(format!(
-                "provider auth cannot be combined with {}",
-                conflicts.join(", ")
-            ))
-        }
+        Ok(())
     }
 
     fn build_header_map(&self) -> AgereResult<HeaderMap> {
@@ -395,7 +379,7 @@ impl ModelProviderInfo {
 
     pub fn is_openai(&self) -> bool {
         matches!(self.wire_api, WireApi::Responses)
-            && self.base_url.as_deref().map_or(true, |url| {
+            && self.base_url.as_deref().is_none_or(|url| {
                 url.starts_with("https://api.openai.com") || url.starts_with("https://chatgpt.com")
             })
     }
@@ -414,10 +398,6 @@ impl ModelProviderInfo {
                 .base_url
                 .as_deref()
                 .is_some_and(|url| is_azure_responses_provider("", Some(url)))
-    }
-
-    pub fn has_command_auth(&self) -> bool {
-        self.auth.is_some()
     }
 }
 
@@ -501,7 +481,7 @@ pub fn create_oss_provider_with_base_url(base_url: &str, wire_api: WireApi) -> M
 /// These proxies validate the Anthropic thinking block schema strictly
 /// and reject blocks missing the `signature` field.
 /// New domains can be added here without user configuration.
-const THINKING_SIGNATURE_PROXY_DOMAINS: &[&str] = &["openrouter.ai"];
+const THINKING_SIGNATURE_PROXY_DOMAINS: &[&str] = &["openrouter.ai", "api.deepseek.com"];
 
 /// Check whether a provider's base URL belongs to a known proxy that requires
 /// thinking blocks to carry a valid signature. When true, thinking blocks

@@ -8,15 +8,14 @@ use agere_login::AgereAuth;
 use agere_login::AuthManager;
 use agere_model_provider_info::ModelProviderInfo;
 use agere_models_manager::collaboration_mode_presets::CollaborationModesConfig;
-use agere_models_manager::manager::OpenAiModelsManager;
 use agere_models_manager::manager::SharedModelsManager;
 use agere_models_manager::manager::StaticModelsManager;
+use agere_models_manager::manager::WireApiModelsManager;
 use agere_protocol::account::ProviderAccount;
 use agere_protocol::openai_models::ModelsResponse;
 
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
 use crate::anthropic::AnthropicModelProvider;
-use crate::auth::auth_manager_for_provider;
 use crate::auth::resolve_provider_auth;
 use crate::models_endpoint::OpenAiModelsEndpoint;
 use agere_config::config_toml::ModelConfig;
@@ -112,7 +111,7 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
     /// Returns the auth provider used to attach request credentials.
     async fn api_auth(&self) -> agere_protocol::error::Result<SharedAuthProvider> {
         let auth = self.auth().await;
-        resolve_provider_auth(auth.as_ref(), self.info())
+        resolve_provider_auth(auth.as_ref(), self.info()).await
     }
 
     /// Creates the model manager implementation appropriate for this provider.
@@ -160,7 +159,6 @@ impl ConfiguredModelProvider {
         auth_manager: Option<Arc<AuthManager>>,
         config_models: Vec<ModelConfig>,
     ) -> Self {
-        let auth_manager = auth_manager_for_provider(auth_manager, &provider_info);
         Self {
             info: provider_info,
             auth_manager,
@@ -215,24 +213,31 @@ impl ModelProvider for ConfiguredModelProvider {
                     &self.config_models,
                     self.info.wire_api,
                 );
-                Arc::new(StaticModelsManager::new(
+                Arc::new(StaticModelsManager::new_with_wire_api_catalog_cache(
                     self.auth_manager.clone(),
                     catalog,
                     collaboration_modes_config,
+                    self.info.wire_api,
+                    agere_home,
                 ))
             }
-            (Some(model_catalog), true) => Arc::new(StaticModelsManager::new(
-                self.auth_manager.clone(),
-                model_catalog,
-                collaboration_modes_config,
-            )),
-            (None, true) => {
+            (Some(model_catalog), true) => {
+                Arc::new(StaticModelsManager::new_with_wire_api_catalog_cache(
+                    self.auth_manager.clone(),
+                    model_catalog,
+                    collaboration_modes_config,
+                    self.info.wire_api,
+                    agere_home,
+                ))
+            }
+            (_, true) => {
                 let endpoint = Arc::new(OpenAiModelsEndpoint::new(
                     self.info.clone(),
                     self.auth_manager.clone(),
                 ));
-                Arc::new(OpenAiModelsManager::new(
+                Arc::new(WireApiModelsManager::new(
                     agere_home,
+                    self.info.wire_api,
                     endpoint,
                     self.auth_manager.clone(),
                     collaboration_modes_config,
@@ -244,12 +249,10 @@ impl ModelProvider for ConfiguredModelProvider {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU64;
-
     use agere_model_provider_info::ModelProviderAwsAuthInfo;
     use agere_model_provider_info::WireApi;
     use agere_models_manager::manager::RefreshStrategy;
-    use agere_protocol::config_types::ModelProviderAuthInfo;
+    use agere_protocol::openai_models::InputModality;
     use agere_protocol::openai_models::ModelInfo;
     use agere_protocol::openai_models::ModelsResponse;
     use pretty_assertions::assert_eq;
@@ -263,21 +266,15 @@ mod tests {
 
     use super::*;
 
-    fn provider_info_with_command_auth() -> ModelProviderInfo {
-        ModelProviderInfo {
-            auth: Some(ModelProviderAuthInfo {
-                command: "print-token".to_string(),
-                args: Vec::new(),
-                timeout_ms: NonZeroU64::new(5_000).expect("timeout should be non-zero"),
-                refresh_interval_ms: 300_000,
-                cwd: std::env::current_dir()
-                    .expect("current dir should be available")
-                    .try_into()
-                    .expect("current dir should be absolute"),
-            }),
-            requires_provider_auth: false,
-            ..ModelProviderInfo::create_openai_provider(/*base_url*/ None)
-        }
+    const EXISTING_ENV_VAR_WITH_NON_EMPTY_VALUE: &str = "PATH";
+
+    fn authorization_header(auth: &dyn agere_api::AuthProvider) -> String {
+        auth.to_auth_headers()
+            .get(http::header::AUTHORIZATION)
+            .expect("authorization header should be present")
+            .to_str()
+            .expect("authorization header should be valid ASCII")
+            .to_string()
     }
 
     fn test_agere_home() -> std::path::PathBuf {
@@ -343,19 +340,34 @@ mod tests {
         assert_eq!(provider.capabilities(), ProviderCapabilities::default());
     }
 
-    #[test]
-    fn create_model_provider_builds_command_auth_manager_without_base_manager() {
+    #[tokio::test]
+    async fn anthropic_provider_prefers_env_key_over_configured_token() {
+        let env_token = std::env::var(EXISTING_ENV_VAR_WITH_NON_EMPTY_VALUE)
+            .expect("PATH should be set in the test environment");
+        assert!(!env_token.is_empty());
+
         let provider = create_model_provider(
-            provider_info_with_command_auth(),
+            ModelProviderInfo {
+                base_url: Some("https://example.test/anthropic".to_string()),
+                env_key: Some(EXISTING_ENV_VAR_WITH_NON_EMPTY_VALUE.to_string()),
+                experimental_bearer_token: Some("configured-token".to_string()),
+                wire_api: WireApi::Anthropic,
+                requires_provider_auth: false,
+                ..Default::default()
+            },
             /*auth_manager*/ None,
             vec![],
         );
 
-        let auth_manager = provider
-            .auth_manager()
-            .expect("command auth provider should have an auth manager");
+        let auth = provider
+            .api_auth()
+            .await
+            .expect("Anthropic env auth should resolve");
 
-        assert!(auth_manager.has_external_auth());
+        assert_eq!(
+            authorization_header(auth.as_ref()),
+            format!("Bearer {env_token}")
+        );
     }
 
     #[test]
@@ -520,6 +532,7 @@ mod tests {
             vec![ModelConfig {
                 name: "custom-provider-model".to_string(),
                 context_window: Some(1_000_000),
+                input_modalities: None,
             }],
         );
         let manager = provider.models_manager(
@@ -540,7 +553,92 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn configured_provider_models_manager_uses_provider_bearer_token() {
+    async fn configured_provider_static_models_apply_wire_api_catalog_overlay() {
+        let agere_home = std::env::temp_dir().join(format!(
+            "agere-model-provider-wire-api-overlay-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&agere_home);
+        let catalog_dir = agere_home.join("model_catalog");
+        std::fs::create_dir_all(&catalog_dir).expect("create model catalog dir");
+        let mut overlay_model = remote_model("qwen3.7-plus");
+        overlay_model.display_name = "Catalog Qwen".to_string();
+        overlay_model.context_window = Some(123);
+        overlay_model.max_context_window = Some(123);
+        overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+        std::fs::write(
+            catalog_dir.join("responses.json"),
+            serde_json::to_string(&json!({
+                "wire_api": "responses",
+                "fetched_at": chrono::Utc::now().to_rfc3339(),
+                "client_version": agere_models_manager::client_version_to_whole(),
+                "catalog_version": "test",
+                "models": [overlay_model],
+            }))
+            .expect("cache should serialize"),
+        )
+        .expect("write model catalog cache");
+
+        let provider = create_model_provider(
+            provider_for("https://example.test".to_string()),
+            /*auth_manager*/ None,
+            vec![ModelConfig {
+                name: "qwen3.7-plus".to_string(),
+                context_window: Some(1_000_000),
+                input_modalities: None,
+            }],
+        );
+        let manager = provider.models_manager(
+            agere_home,
+            Some(ModelsResponse { models: Vec::new() }),
+            Default::default(),
+        );
+
+        let info = manager
+            .get_model_info("qwen3.7-plus", &Default::default())
+            .await;
+
+        assert_eq!(info.display_name, "qwen3.7-plus");
+        assert_eq!(info.context_window, Some(1_000_000));
+        assert_eq!(
+            info.input_modalities,
+            Some(vec![InputModality::Text, InputModality::Image])
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_provider_uses_configured_static_catalog_when_present() {
+        let custom_model =
+            agere_models_manager::model_info::model_info_from_slug("configured-catalog-model");
+
+        let provider = create_model_provider(
+            provider_for("https://example.test".to_string()),
+            /*auth_manager*/ None,
+            vec![],
+        );
+        let manager = provider.models_manager(
+            test_agere_home(),
+            Some(ModelsResponse {
+                models: vec![custom_model],
+            }),
+            Default::default(),
+        );
+
+        let catalog = manager.raw_model_catalog(RefreshStrategy::Online).await;
+
+        assert_eq!(
+            catalog
+                .models
+                .iter()
+                .map(|model| model.slug.as_str())
+                .collect::<Vec<_>>(),
+            vec!["configured-catalog-model"]
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_provider_models_manager_does_not_refresh_models_with_provider_bearer_token()
+    {
         let server = MockServer::start().await;
         let remote_models = vec![remote_model("provider-model")];
 
@@ -554,7 +652,7 @@ mod tests {
                         models: remote_models.clone(),
                     }),
             )
-            .expect(1)
+            .expect(0)
             .mount(&server)
             .await;
 
@@ -576,7 +674,7 @@ mod tests {
         let catalog = manager.raw_model_catalog(RefreshStrategy::Online).await;
 
         assert!(
-            catalog
+            !catalog
                 .models
                 .iter()
                 .any(|model| model.slug == "provider-model")

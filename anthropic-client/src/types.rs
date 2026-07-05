@@ -68,7 +68,7 @@ pub enum MessageContent {
     #[serde(rename = "tool_result")]
     ToolResult {
         tool_use_id: String,
-        content: String,
+        content: ToolResultContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
@@ -84,6 +84,32 @@ pub enum MessageContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum ToolResultContent {
+    Text(String),
+    Blocks(Vec<ToolResultBlock>),
+}
+
+#[cfg(test)]
+impl ToolResultContent {
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            Self::Blocks(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum ToolResultBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { source: ImageSource },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -293,7 +319,7 @@ mod tests {
                     role: "user".into(),
                     content: vec![MessageContent::ToolResult {
                         tool_use_id: "toolu_001".into(),
-                        content: "Sunny".into(),
+                        content: ToolResultContent::Text("Sunny".into()),
                         is_error: None,
                     }],
                 },

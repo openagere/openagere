@@ -319,6 +319,7 @@ mod tests {
             models: vec![ModelConfig {
                 name: format!("{name}-default"),
                 context_window: Some(128000),
+                input_modalities: None,
             }],
         }
     }

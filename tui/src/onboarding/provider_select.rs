@@ -1081,6 +1081,7 @@ mod tests {
             models: vec![ModelConfig {
                 name: "default".to_string(),
                 context_window: Some(128000),
+                input_modalities: None,
             }],
         }
     }
@@ -1094,6 +1095,7 @@ mod tests {
             models: vec![ModelConfig {
                 name: "default".to_string(),
                 context_window: Some(128000),
+                input_modalities: None,
             }],
         }
     }

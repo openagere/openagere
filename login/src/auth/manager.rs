@@ -583,3 +583,42 @@ pub async fn enforce_login_restrictions(config: &AuthConfig) -> std::io::Result<
     // forced_chatgpt_workspace_id is irrelevant for API key auth
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct EmptyExternalAuth;
+
+    #[async_trait]
+    impl ExternalAuth for EmptyExternalAuth {
+        fn auth_mode(&self) -> AuthMode {
+            AuthMode::ApiKey
+        }
+
+        async fn refresh(
+            &self,
+            _context: ExternalAuthRefreshContext,
+        ) -> std::io::Result<ExternalAuthTokens> {
+            Err(std::io::Error::other("no external auth tokens"))
+        }
+    }
+
+    #[tokio::test]
+    async fn external_auth_bridge_does_not_hide_managed_auth_without_tokens() {
+        let manager = AuthManager::from_auth_for_testing(AgereAuth::from_api_key("stored-token"));
+        manager.set_external_auth(Arc::new(EmptyExternalAuth));
+
+        assert_eq!(
+            manager.auth_cached().as_ref().and_then(AgereAuth::api_key),
+            Some("stored-token")
+        );
+        assert_eq!(
+            manager.auth().await.as_ref().and_then(AgereAuth::api_key),
+            Some("stored-token")
+        );
+    }
+}

@@ -2,12 +2,16 @@ use std::sync::Arc;
 use std::sync::PoisonError;
 use std::sync::RwLock;
 
+use agere_model_provider_info::WireApi;
 use agere_protocol::config_types::CollaborationModeMask;
 use agere_protocol::openai_models::ModelInfo;
 use agere_protocol::openai_models::ModelsResponse;
 use async_trait::async_trait;
 use tokio::sync::TryLockError;
 
+#[cfg(test)]
+use crate::catalog_overlay::CatalogModel;
+use crate::catalog_overlay::CatalogOverlay;
 use crate::manager::ModelsManager;
 use crate::manager::RefreshStrategy;
 use crate::manager::SharedModelsManager;
@@ -61,6 +65,18 @@ impl ModelsManager for SwappableModelsManager {
         self.current().list_collaboration_modes()
     }
 
+    fn wire_api(&self) -> WireApi {
+        self.current().wire_api()
+    }
+
+    async fn wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
+        self.current().wire_api_overlay_catalog().await
+    }
+
+    fn try_wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
+        self.current().try_wire_api_overlay_catalog()
+    }
+
     async fn refresh_if_new_etag(&self, etag: String) {
         self.current().refresh_if_new_etag(etag).await;
     }
@@ -72,9 +88,54 @@ mod tests {
     use crate::collaboration_mode_presets::CollaborationModesConfig;
     use crate::manager::RefreshStrategy;
     use crate::manager::StaticModelsManager;
+    use crate::model_info;
     use crate::test_support::static_manager_with_models;
     use agere_login::AgereAuth;
     use agere_login::AuthManager;
+    use agere_protocol::openai_models::InputModality;
+    use async_trait::async_trait;
+
+    #[derive(Debug)]
+    struct OverlayModelsManager {
+        overlay: CatalogOverlay,
+    }
+
+    #[async_trait]
+    impl ModelsManager for OverlayModelsManager {
+        async fn raw_model_catalog(&self, _refresh_strategy: RefreshStrategy) -> ModelsResponse {
+            ModelsResponse { models: Vec::new() }
+        }
+
+        async fn get_remote_models(&self) -> Vec<ModelInfo> {
+            Vec::new()
+        }
+
+        fn try_get_remote_models(&self) -> Result<Vec<ModelInfo>, TryLockError> {
+            Ok(Vec::new())
+        }
+
+        fn auth_manager(&self) -> Option<Arc<AuthManager>> {
+            None
+        }
+
+        fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
+            Vec::new()
+        }
+
+        fn wire_api(&self) -> WireApi {
+            WireApi::Responses
+        }
+
+        async fn wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
+            Some(self.overlay.clone())
+        }
+
+        fn try_wire_api_overlay_catalog(&self) -> Option<CatalogOverlay> {
+            Some(self.overlay.clone())
+        }
+
+        async fn refresh_if_new_etag(&self, _etag: String) {}
+    }
 
     #[tokio::test]
     async fn swap_replaces_inner_catalog() {
@@ -101,10 +162,54 @@ mod tests {
             Some(Arc::clone(&second_auth)),
             ModelsResponse { models: Vec::new() },
             CollaborationModesConfig::default(),
+            WireApi::Responses,
         ));
         let swappable = SwappableModelsManager::new(first);
         assert!(swappable.auth_manager().is_none());
         swappable.swap(second);
         assert!(swappable.auth_manager().is_some());
+    }
+
+    #[tokio::test]
+    async fn wire_api_overlay_catalog_follows_current_inner() {
+        let mut overlay_model = model_info::model_info_from_slug("overlay");
+        overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+        let inner: SharedModelsManager = Arc::new(OverlayModelsManager {
+            overlay: CatalogOverlay {
+                models: vec![CatalogModel::from(overlay_model.clone())],
+            },
+        });
+        let swappable = SwappableModelsManager::new(inner);
+
+        let overlay = swappable
+            .wire_api_overlay_catalog()
+            .await
+            .expect("swappable should delegate overlay catalog to current inner");
+
+        assert_eq!(
+            overlay.models[0].input_modalities,
+            overlay_model.input_modalities
+        );
+    }
+
+    #[test]
+    fn try_wire_api_overlay_catalog_follows_current_inner() {
+        let mut overlay_model = model_info::model_info_from_slug("overlay");
+        overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+        let inner: SharedModelsManager = Arc::new(OverlayModelsManager {
+            overlay: CatalogOverlay {
+                models: vec![CatalogModel::from(overlay_model.clone())],
+            },
+        });
+        let swappable = SwappableModelsManager::new(inner);
+
+        let overlay = swappable
+            .try_wire_api_overlay_catalog()
+            .expect("swappable should delegate synchronous overlay catalog to current inner");
+
+        assert_eq!(
+            overlay.models[0].input_modalities,
+            overlay_model.input_modalities
+        );
     }
 }

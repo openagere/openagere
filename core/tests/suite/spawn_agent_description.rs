@@ -62,7 +62,7 @@ fn test_model_info(
         shell_type: ConfigShellToolType::ShellCommand,
         visibility,
         supported_in_api: true,
-        input_modalities: default_input_modalities(),
+        input_modalities: Some(default_input_modalities()),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
         priority: 1,

@@ -4,7 +4,6 @@ use agere_model_provider_info::WireApi;
 use agere_protocol::config_types::ReasoningSummary;
 use agere_protocol::openai_models::ApplyPatchToolType;
 use agere_protocol::openai_models::ConfigShellToolType;
-use agere_protocol::openai_models::InputModality;
 use agere_protocol::openai_models::ModelInfo;
 use agere_protocol::openai_models::ModelVisibility;
 use agere_protocol::openai_models::ModelsResponse;
@@ -60,7 +59,7 @@ fn model_from_config(cfg: &ModelConfig, wire_api: WireApi, priority: i32) -> Mod
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: vec![InputModality::Text],
+        input_modalities: cfg.input_modalities.clone(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     }
@@ -96,6 +95,7 @@ fn reasoning_levels_for_wire_api(wire_api: WireApi) -> Vec<ReasoningEffortPreset
 #[cfg(test)]
 mod tests {
     use agere_model_provider_info::WireApi;
+    use agere_protocol::openai_models::InputModality;
 
     use super::*;
 
@@ -105,10 +105,12 @@ mod tests {
             ModelConfig {
                 name: "deepseek-v4-pro".to_string(),
                 context_window: Some(200_000),
+                input_modalities: None,
             },
             ModelConfig {
                 name: "claude-sonnet-4-6".to_string(),
                 context_window: None,
+                input_modalities: None,
             },
         ];
 
@@ -122,7 +124,24 @@ mod tests {
             response.models[1].context_window,
             Some(DEFAULT_CONTEXT_WINDOW)
         );
+        assert_eq!(response.models[0].input_modalities, None);
         assert!(!response.models[0].used_fallback_model_metadata);
+    }
+
+    #[test]
+    fn configured_input_modalities_are_explicit() {
+        let models = vec![ModelConfig {
+            name: "text-only".to_string(),
+            context_window: None,
+            input_modalities: Some(vec![InputModality::Text]),
+        }];
+
+        let response = build_models_response(&models, WireApi::Anthropic);
+
+        assert_eq!(
+            response.models[0].input_modalities,
+            Some(vec![InputModality::Text])
+        );
     }
 
     #[test]
@@ -130,6 +149,7 @@ mod tests {
         let models = vec![ModelConfig {
             name: "test".to_string(),
             context_window: None,
+            input_modalities: None,
         }];
         let response = build_models_response(&models, WireApi::Anthropic);
         let efforts: Vec<_> = response.models[0]
@@ -156,6 +176,7 @@ mod tests {
         let models = vec![ModelConfig {
             name: "test".to_string(),
             context_window: None,
+            input_modalities: None,
         }];
         let response = build_models_response(&models, WireApi::Responses);
         let efforts: Vec<_> = response.models[0]
@@ -182,6 +203,7 @@ mod tests {
         let models = vec![ModelConfig {
             name: "test".to_string(),
             context_window: None,
+            input_modalities: None,
         }];
         let response = build_models_response(&models, WireApi::Chat);
         let efforts: Vec<_> = response.models[0]

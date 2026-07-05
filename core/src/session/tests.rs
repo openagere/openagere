@@ -2996,6 +2996,7 @@ async fn provider_switch_rebuilds_and_swaps_session_models_manager() {
             config.models = vec![agere_config::config_toml::ModelConfig {
                 name: current_slug_for_config,
                 context_window: Some(256_000),
+                input_modalities: None,
             }];
         },
     )
@@ -3141,6 +3142,7 @@ async fn provider_downshift_precompact_does_not_emit_synthetic_turn_lifecycle() 
             config.models = vec![agere_config::config_toml::ModelConfig {
                 name: current_slug_for_config,
                 context_window: Some(100),
+                input_modalities: None,
             }];
         },
     )
@@ -9033,10 +9035,9 @@ async fn sample_rollout(
     );
     rollout_items.push(RolloutItem::ResponseItem(assistant1.clone()));
 
+    let input_modalities = reconstruction_turn.model_info.effective_input_modalities();
     let summary1 = "summary one";
-    let snapshot1 = live_history
-        .clone()
-        .for_prompt(&reconstruction_turn.model_info.input_modalities);
+    let snapshot1 = live_history.clone().for_prompt(&input_modalities);
     let user_messages1 = collect_user_messages(&snapshot1);
     let rebuilt1 = compact::build_compacted_history(Vec::new(), &user_messages1, summary1);
     live_history.replace(rebuilt1);
@@ -9074,9 +9075,7 @@ async fn sample_rollout(
     rollout_items.push(RolloutItem::ResponseItem(assistant2.clone()));
 
     let summary2 = "summary two";
-    let snapshot2 = live_history
-        .clone()
-        .for_prompt(&reconstruction_turn.model_info.input_modalities);
+    let snapshot2 = live_history.clone().for_prompt(&input_modalities);
     let user_messages2 = collect_user_messages(&snapshot2);
     let rebuilt2 = compact::build_compacted_history(Vec::new(), &user_messages2, summary2);
     live_history.replace(rebuilt2);
@@ -9113,10 +9112,7 @@ async fn sample_rollout(
     );
     rollout_items.push(RolloutItem::ResponseItem(assistant3));
 
-    (
-        rollout_items,
-        live_history.for_prompt(&reconstruction_turn.model_info.input_modalities),
-    )
+    (rollout_items, live_history.for_prompt(&input_modalities))
 }
 
 #[tokio::test]

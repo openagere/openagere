@@ -28,10 +28,11 @@ agere-otel = { workspace = true }
 agere-protocol = { workspace = true }
 agere-response-debug-context = { workspace = true }
 http = { workspace = true }
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["process", "sync", "time"] }
 tracing = { workspace = true, features = ["log"] }
 
 [dev-dependencies]
+chrono = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

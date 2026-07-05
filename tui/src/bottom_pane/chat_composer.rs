@@ -9165,6 +9165,47 @@ mod tests {
     }
 
     #[test]
+    fn burst_pasted_filepath_attaches_image() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let tmp = tempdir().expect("create TempDir");
+        let tmp_path: PathBuf = tmp.path().join("agere_tui_test_drag_image.png");
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_fn(3, 2, |_x, _y| Rgba([1, 2, 3, 255]));
+        img.save(&tmp_path).expect("failed to write temp png");
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Agere to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+
+        let mut now = Instant::now();
+        let step = Duration::from_millis(1);
+        for ch in tmp_path.to_string_lossy().chars() {
+            let _ = composer.handle_input_basic_with_time(
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+                now,
+            );
+            now += step;
+        }
+
+        let flush_time = now + PasteBurst::recommended_active_flush_delay() + step;
+        let flushed = composer.handle_paste_burst_flush(flush_time);
+
+        assert!(flushed, "expected dragged filepath burst to flush");
+        assert!(composer.textarea.text().starts_with("[Image #1] "));
+        let imgs = composer.take_recent_submission_images();
+        assert_eq!(imgs, vec![tmp_path]);
+    }
+
+    #[test]
     fn slash_path_input_submits_without_command_error() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;

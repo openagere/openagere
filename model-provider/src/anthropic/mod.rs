@@ -112,7 +112,7 @@ impl ModelProvider for AnthropicModelProvider {
 
     fn models_manager(
         &self,
-        _agere_home: PathBuf,
+        agere_home: PathBuf,
         config_model_catalog: Option<ModelsResponse>,
         collaboration_modes_config: CollaborationModesConfig,
     ) -> SharedModelsManager {
@@ -124,10 +124,12 @@ impl ModelProvider for AnthropicModelProvider {
                 self.info.wire_api,
             ))
         };
-        Arc::new(StaticModelsManager::new(
+        Arc::new(StaticModelsManager::new_with_wire_api_catalog_cache(
             /*auth_manager*/ None,
             catalog.unwrap_or_else(|| ModelsResponse { models: vec![] }),
             collaboration_modes_config,
+            self.info.wire_api,
+            agere_home,
         ))
     }
 }
@@ -168,6 +170,7 @@ mod tests {
         let config_models = vec![agere_config::config_toml::ModelConfig {
             name: "test-model".to_string(),
             context_window: Some(100_000),
+            input_modalities: None,
         }];
         let provider = AnthropicModelProvider::new(
             ModelProviderInfo {
@@ -197,6 +200,7 @@ mod tests {
         let config_models = vec![agere_config::config_toml::ModelConfig {
             name: "qwen3.7-plus".to_string(),
             context_window: Some(1_000_000),
+            input_modalities: None,
         }];
         let provider = AnthropicModelProvider::new(
             ModelProviderInfo {

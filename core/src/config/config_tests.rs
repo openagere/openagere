@@ -391,7 +391,7 @@ web_search = false
 }
 
 #[test]
-fn rejects_provider_auth_with_env_key() {
+fn rejects_provider_auth() {
     let err = toml::from_str::<ConfigToml>(
         r#"
 [model_providers.corp]
@@ -406,7 +406,7 @@ command = "print-token"
 
     assert!(
         err.to_string()
-            .contains("model_providers.corp: provider auth cannot be combined with env_key")
+            .contains("model_providers.corp: provider auth is not supported; use env_key or experimental_bearer_token")
     );
 }
 

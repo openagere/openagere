@@ -1,13 +1,18 @@
 use crate::ToolDefinition;
 use crate::translate::content::content_item_to_anthropic;
+use crate::translate::content::parse_data_url;
 use crate::translate::thinking::to_anthropic_output_config;
 use crate::translate::thinking::to_anthropic_thinking;
 use crate::translate::tools::to_anthropic_tools;
+use crate::types::ImageSource;
 use crate::types::Message;
 use crate::types::MessageContent;
 use crate::types::MessagesRequest;
 use crate::types::SystemPrompt;
+use crate::types::ToolResultBlock;
+use crate::types::ToolResultContent;
 use agere_protocol::models::ContentItem;
+use agere_protocol::models::FunctionCallOutputContentItem;
 use agere_protocol::models::FunctionCallOutputPayload;
 use agere_protocol::models::ResponseInputItem;
 use agere_protocol::models::ResponseItem;
@@ -210,13 +215,12 @@ pub fn build_anthropic_messages_from_response_items(
                 );
             }
             ResponseItem::FunctionCallOutput { call_id, output } => {
-                let text = output.text_content().unwrap_or("").to_string();
                 append_or_push(
                     &mut messages,
                     "user".into(),
                     vec![MessageContent::ToolResult {
                         tool_use_id: call_id.clone(),
-                        content: text,
+                        content: tool_result_content(output),
                         is_error: None,
                     }],
                 );
@@ -226,13 +230,12 @@ pub fn build_anthropic_messages_from_response_items(
                 name: _,
                 output,
             } => {
-                let text = output.text_content().unwrap_or("").to_string();
                 append_or_push(
                     &mut messages,
                     "user".into(),
                     vec![MessageContent::ToolResult {
                         tool_use_id: call_id.clone(),
-                        content: text,
+                        content: tool_result_content(output),
                         is_error: None,
                     }],
                 );
@@ -344,6 +347,39 @@ fn append_or_push(messages: &mut Vec<Message>, role: String, blocks: Vec<Message
     }
 }
 
+fn tool_result_content(output: &FunctionCallOutputPayload) -> ToolResultContent {
+    match output.content_items() {
+        Some([]) => ToolResultContent::Text(String::new()),
+        Some(items) => ToolResultContent::Blocks(
+            items
+                .iter()
+                .map(function_call_output_content_item_to_tool_result_block)
+                .collect(),
+        ),
+        None => ToolResultContent::Text(output.text_content().unwrap_or("").to_string()),
+    }
+}
+
+fn function_call_output_content_item_to_tool_result_block(
+    item: &FunctionCallOutputContentItem,
+) -> ToolResultBlock {
+    match item {
+        FunctionCallOutputContentItem::InputText { text } => {
+            ToolResultBlock::Text { text: text.clone() }
+        }
+        FunctionCallOutputContentItem::InputImage { image_url, .. } => {
+            let (media_type, data) = parse_data_url(image_url);
+            ToolResultBlock::Image {
+                source: ImageSource {
+                    source_type: "base64".into(),
+                    media_type: media_type.into(),
+                    data: data.into(),
+                },
+            }
+        }
+    }
+}
+
 /// Convert a `ResponseItem` to a `ResponseInputItem` for simple cases.
 /// Complex cases (FunctionCall, etc.) are handled directly by `build_anthropic_messages_from_response_items`.
 pub fn response_item_to_input(item: &ResponseItem) -> Option<ResponseInputItem> {
@@ -443,13 +479,12 @@ fn convert_input_items(items: &[ResponseInputItem]) -> Vec<Message> {
                 append_or_push(&mut messages, role, blocks);
             }
             ResponseInputItem::FunctionCallOutput { call_id, output } => {
-                let text = output.text_content().unwrap_or("").to_string();
                 append_or_push(
                     &mut messages,
                     "user".into(),
                     vec![MessageContent::ToolResult {
                         tool_use_id: call_id.clone(),
-                        content: text,
+                        content: tool_result_content(output),
                         is_error: None,
                     }],
                 );
@@ -472,6 +507,7 @@ fn map_role(role: &str) -> String {
 mod tests {
     use super::*;
     use crate::types::ThinkingConfig;
+    use agere_protocol::models::FunctionCallOutputContentItem;
     use agere_protocol::models::FunctionCallOutputPayload;
 
     fn user_text(text: &str) -> ResponseInputItem {
@@ -514,6 +550,25 @@ mod tests {
         }
     }
 
+    fn make_function_call_image_output(call_id: &str, image_url: &str) -> ResponseItem {
+        ResponseItem::FunctionCallOutput {
+            call_id: call_id.into(),
+            output: FunctionCallOutputPayload::from_content_items(vec![
+                FunctionCallOutputContentItem::InputImage {
+                    image_url: image_url.into(),
+                    detail: None,
+                },
+            ]),
+        }
+    }
+
+    fn make_function_call_empty_content_items_output(call_id: &str) -> ResponseItem {
+        ResponseItem::FunctionCallOutput {
+            call_id: call_id.into(),
+            output: FunctionCallOutputPayload::from_content_items(Vec::new()),
+        }
+    }
+
     #[test]
     fn basic_user_message() {
         let items = vec![user_text("Hello")];
@@ -531,7 +586,7 @@ mod tests {
         );
         assert_eq!(req.model, "claude-sonnet-4-6");
         assert_eq!(req.system, Some(SystemPrompt::Text("Be helpful.".into())));
-        assert_eq!(req.stream, true);
+        assert!(req.stream);
         assert_eq!(req.messages.len(), 1);
         assert_eq!(req.messages[0].role, "user");
         assert_eq!(
@@ -552,6 +607,66 @@ mod tests {
     }
 
     #[test]
+    fn function_call_output_image_becomes_anthropic_tool_result_image_block() {
+        let items = vec![
+            make_function_call("call_1", "view_image", r#"{"path":"image.png"}"#),
+            make_function_call_image_output("call_1", "data:image/png;base64,iVBORw0KGgo="),
+        ];
+
+        let messages = build_anthropic_messages_from_response_items(
+            &items,
+            &MessageBuildContext::new().with_require_thinking_signature(true),
+        );
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].role, "user");
+        let tool_result =
+            serde_json::to_value(&messages[1].content[0]).expect("tool result serializes to JSON");
+        assert_eq!(
+            tool_result,
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": [{
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgo="
+                    }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn empty_content_item_tool_result_becomes_empty_text() {
+        let items = vec![
+            make_function_call("call_1", "empty_tool", "{}"),
+            make_function_call_empty_content_items_output("call_1"),
+        ];
+
+        let messages = build_anthropic_messages_from_response_items(
+            &items,
+            &MessageBuildContext::new().with_require_thinking_signature(true),
+        );
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].role, "user");
+        match &messages[1].content[0] {
+            MessageContent::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } => {
+                assert_eq!(tool_use_id, "call_1");
+                assert_eq!(content.as_str(), Some(""));
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn tool_result_becomes_user_role() {
         let items = vec![
             assistant_text("Let me check"),
@@ -568,7 +683,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(tool_use_id, "call_1");
-                assert_eq!(content, "Sunny");
+                assert_eq!(content.as_str(), Some("Sunny"));
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }
@@ -604,7 +719,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(tool_use_id, "call_1");
-                assert_eq!(content, "Sunny");
+                assert_eq!(content.as_str(), Some("Sunny"));
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }
@@ -681,7 +796,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(tool_use_id, "call_orphan");
-                assert_eq!(content, "aborted");
+                assert_eq!(content.as_str(), Some("aborted"));
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }
@@ -790,7 +905,7 @@ mod tests {
         assert_eq!(messages[2].role, "user");
         assert_eq!(messages[2].content.len(), 2);
         assert!(
-            matches!(&messages[2].content[0], MessageContent::ToolResult { content, .. } if content == "Sunny, 72°F")
+            matches!(&messages[2].content[0], MessageContent::ToolResult { content, .. } if content.as_str() == Some("Sunny, 72°F"))
         );
         assert!(
             matches!(&messages[2].content[1], MessageContent::Text { text } if text == "What about tomorrow?")
@@ -809,7 +924,7 @@ mod tests {
         // Message 4: user with tool_result
         assert_eq!(messages[4].role, "user");
         assert!(
-            matches!(&messages[4].content[0], MessageContent::ToolResult { content, .. } if content == "Cloudy, 65°F")
+            matches!(&messages[4].content[0], MessageContent::ToolResult { content, .. } if content.as_str() == Some("Cloudy, 65°F"))
         );
     }
 
@@ -849,7 +964,7 @@ mod tests {
             .content
             .iter()
             .filter_map(|c| match c {
-                MessageContent::ToolResult { content, .. } => Some(content.as_str()),
+                MessageContent::ToolResult { content, .. } => content.as_str(),
                 _ => None,
             })
             .collect();
@@ -892,7 +1007,7 @@ mod tests {
         );
         assert_eq!(messages[2].role, "user");
         assert!(
-            matches!(&messages[2].content[0], MessageContent::ToolResult { tool_use_id, content, .. } if tool_use_id == "call_1" && content == "hi")
+            matches!(&messages[2].content[0], MessageContent::ToolResult { tool_use_id, content, .. } if tool_use_id == "call_1" && content.as_str() == Some("hi"))
         );
         assert_eq!(messages[3].role, "assistant");
         assert!(
@@ -933,7 +1048,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(tool_use_id, "custom_call_1");
-                assert_eq!(content, "aborted");
+                assert_eq!(content.as_str(), Some("aborted"));
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }

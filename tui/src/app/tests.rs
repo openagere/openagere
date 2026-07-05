@@ -71,6 +71,7 @@ use agere_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermiss
 use agere_protocol::models::FileSystemPermissions;
 use agere_protocol::models::NetworkPermissions;
 use agere_protocol::models::PermissionProfile;
+use agere_protocol::openai_models::InputModality;
 use agere_protocol::protocol::AskForApproval;
 use agere_protocol::protocol::Event;
 use agere_protocol::protocol::EventMsg;
@@ -172,6 +173,7 @@ async fn model_catalog_from_config_uses_current_provider_models() {
     config.models = vec![agere_config::config_toml::ModelConfig {
         name: "resumed-model".to_string(),
         context_window: Some(123_456),
+        input_modalities: None,
     }];
 
     let catalog = App::model_catalog_from_config(&config);
@@ -228,6 +230,7 @@ async fn model_catalog_from_config_rebuilds_for_custom_provider() {
     config.models = vec![agere_config::config_toml::ModelConfig {
         name: "recorded-model".to_string(),
         context_window: Some(222_333),
+        input_modalities: None,
     }];
     let catalog = App::model_catalog_from_config(&config);
 
@@ -236,6 +239,115 @@ async fn model_catalog_from_config_rebuilds_for_custom_provider() {
         Some(222_333)
     );
     assert_eq!(catalog.find_model_context_window("old-model"), None);
+}
+
+#[tokio::test]
+async fn custom_provider_model_catalog_preserves_configured_default_model() {
+    let app = make_test_app().await;
+    let agere_home = tempdir().expect("create agere home");
+    let mut config = app.config.clone();
+    config.agere_home =
+        AbsolutePathBuf::try_from(agere_home.path().to_path_buf()).expect("absolute agere home");
+    config.model_provider_id = "custom-provider".to_string();
+    config.model_provider = agere_model_provider_info::ModelProviderInfo {
+        base_url: Some("https://example.com/v1".to_string()),
+        wire_api: agere_model_provider_info::WireApi::Responses,
+        ..Default::default()
+    };
+    config.model = Some("configured-default".to_string());
+    config.models = vec![
+        agere_config::config_toml::ModelConfig {
+            name: "first-model".to_string(),
+            context_window: None,
+            input_modalities: None,
+        },
+        agere_config::config_toml::ModelConfig {
+            name: "configured-default".to_string(),
+            context_window: None,
+            input_modalities: None,
+        },
+    ];
+
+    let catalog = App::model_catalog_for_config_or_existing(
+        &config,
+        app.model_catalog.clone(),
+        agere_model_provider_info::OPENAI_PROVIDER_ID,
+    )
+    .await;
+
+    let default_markers = catalog
+        .try_list_models()
+        .expect("model catalog should list models")
+        .into_iter()
+        .map(|preset| (preset.model, preset.is_default))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        default_markers,
+        vec![
+            ("first-model".to_string(), false),
+            ("configured-default".to_string(), true),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn custom_provider_model_catalog_applies_wire_api_cache_modalities() {
+    let app = make_test_app().await;
+    let agere_home = tempdir().expect("create agere home");
+    let catalog_dir = agere_home.path().join("model_catalog");
+    std::fs::create_dir_all(&catalog_dir).expect("create model catalog dir");
+
+    let mut overlay_model = agere_models_manager::model_info::model_info_from_slug_for_wire_api(
+        "qwen3.7-plus",
+        agere_model_provider_info::WireApi::Anthropic,
+    );
+    overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+    let envelope = serde_json::json!({
+        "wire_api": "anthropic",
+        "fetched_at": chrono::Utc::now().to_rfc3339(),
+        "client_version": agere_models_manager::client_version_to_whole(),
+        "catalog_version": "test-qwen-image",
+        "models": [overlay_model],
+    });
+    std::fs::write(
+        catalog_dir.join("anthropic.json"),
+        serde_json::to_vec_pretty(&envelope).expect("serialize catalog envelope"),
+    )
+    .expect("write wire api catalog cache");
+
+    let mut config = app.config.clone();
+    config.agere_home =
+        AbsolutePathBuf::try_from(agere_home.path().to_path_buf()).expect("absolute agere home");
+    config.model_provider_id = "custom-anthropic".to_string();
+    config.model_provider = agere_model_provider_info::ModelProviderInfo {
+        base_url: Some("https://example.com/anthropic".to_string()),
+        wire_api: agere_model_provider_info::WireApi::Anthropic,
+        ..Default::default()
+    };
+    config.model = Some("qwen3.7-plus".to_string());
+    config.models = vec![agere_config::config_toml::ModelConfig {
+        name: "qwen3.7-plus".to_string(),
+        context_window: Some(1_000_000),
+        input_modalities: None,
+    }];
+
+    let catalog = App::model_catalog_for_config_or_existing(
+        &config,
+        app.model_catalog.clone(),
+        agere_model_provider_info::OPENAI_PROVIDER_ID,
+    )
+    .await;
+    let qwen = catalog
+        .try_list_models()
+        .expect("model catalog should list models")
+        .into_iter()
+        .find(|preset| preset.model == "qwen3.7-plus")
+        .expect("qwen preset should exist");
+
+    assert_eq!(
+        qwen.input_modalities,
+        vec![InputModality::Text, InputModality::Image]
+    );
 }
 
 #[tokio::test]

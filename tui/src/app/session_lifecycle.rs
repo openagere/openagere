@@ -774,6 +774,7 @@ impl App {
         (!session.model.trim().is_empty()).then(|| session.model.clone())
     }
 
+    #[cfg(test)]
     pub(super) fn model_catalog_from_config(config: &Config) -> Arc<ModelCatalog> {
         let model = config
             .model
@@ -810,7 +811,7 @@ impl App {
         previous_model_provider_id: &str,
     ) -> Arc<ModelCatalog> {
         if !Self::is_builtin_model_provider(config.model_provider_id.as_str()) {
-            return Self::model_catalog_from_config(config);
+            return Self::model_catalog_from_provider_config(config).await;
         }
 
         if !Self::should_refresh_builtin_model_catalog(config, previous_model_provider_id) {
@@ -840,7 +841,17 @@ impl App {
             config.model_catalog.clone(),
             collaboration_modes_config,
         );
-        let presets = models_manager.list_models(RefreshStrategy::Offline).await;
+        let mut presets = models_manager.list_models(RefreshStrategy::Offline).await;
+        if !Self::is_builtin_model_provider(config.model_provider_id.as_str())
+            && let Some(configured_model) = config.model.as_deref()
+            && presets
+                .iter()
+                .any(|preset| preset.model == configured_model)
+        {
+            for preset in &mut presets {
+                preset.is_default = preset.model == configured_model;
+            }
+        }
         Self::model_catalog_from_presets(config, presets)
     }
 

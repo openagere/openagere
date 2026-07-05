@@ -1475,10 +1475,12 @@ fn replace_models_table_blocking_writes_full_table() {
             ModelConfig {
                 name: "deepseek-chat".to_string(),
                 context_window: Some(200000),
+                input_modalities: None,
             },
             ModelConfig {
                 name: "deepseek-reasoner".to_string(),
                 context_window: Some(128000),
+                input_modalities: None,
             },
         ])],
     )
@@ -1507,6 +1509,7 @@ fn replace_models_table_combines_with_set_path_in_one_batch() {
             ConfigEdit::ReplaceModelsTable(vec![ModelConfig {
                 name: "deepseek-chat".to_string(),
                 context_window: Some(200000),
+                input_modalities: None,
             }]),
         ])
         .apply_blocking()

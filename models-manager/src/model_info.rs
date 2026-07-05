@@ -1,5 +1,7 @@
+use agere_model_provider_info::WireApi;
 use agere_protocol::config_types::ReasoningSummary;
 use agere_protocol::openai_models::ConfigShellToolType;
+use agere_protocol::openai_models::InputModality;
 use agere_protocol::openai_models::ModelInfo;
 use agere_protocol::openai_models::ModelInstructionsVariables;
 use agere_protocol::openai_models::ModelMessages;
@@ -7,7 +9,6 @@ use agere_protocol::openai_models::ModelVisibility;
 use agere_protocol::openai_models::TruncationMode;
 use agere_protocol::openai_models::TruncationPolicyConfig;
 use agere_protocol::openai_models::WebSearchToolType;
-use agere_protocol::openai_models::default_input_modalities;
 
 use crate::config::ModelsManagerConfig;
 use agere_utils_common::approx_bytes_for_tokens;
@@ -62,9 +63,38 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
     model
 }
 
+pub fn with_effective_input_modalities_for_wire_api(
+    mut model: ModelInfo,
+    wire_api: WireApi,
+) -> ModelInfo {
+    if model.input_modalities.is_none() {
+        model.input_modalities = Some(default_input_modalities_for_wire_api(wire_api));
+    }
+    model
+}
+
+pub fn default_input_modalities_for_wire_api(wire_api: WireApi) -> Vec<InputModality> {
+    match wire_api {
+        WireApi::Responses | WireApi::Chat | WireApi::Anthropic => vec![InputModality::Text],
+    }
+}
+
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
+///
+/// Preserves legacy `[Text, Image]` default for backward compatibility.
+/// Prefer `model_info_from_slug_for_wire_api` for new code that knows the wire API.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
+    let mut model = model_info_from_slug_for_wire_api(slug, WireApi::Responses);
+    model.input_modalities = None;
+    model
+}
+
+/// Build a wire_api-aware fallback model descriptor.
+///
+/// Unknown models default to text-only unless the catalog explicitly enables image support.
+pub fn model_info_from_slug_for_wire_api(slug: &str, wire_api: WireApi) -> ModelInfo {
     warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    let input_modalities = default_input_modalities_for_wire_api(wire_api);
     ModelInfo {
         slug: slug.to_string(),
         display_name: slug.to_string(),
@@ -94,8 +124,8 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: true, // this is the fallback model metadata
+        input_modalities: Some(input_modalities),
+        used_fallback_model_metadata: true,
         supports_search_tool: false,
     }
 }

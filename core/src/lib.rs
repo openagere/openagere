@@ -104,7 +104,6 @@ mod skills_watcher;
 mod stream_events_utils;
 pub mod test_support;
 mod unified_exec;
-pub use agere_protocol::config_types::ModelProviderAuthInfo;
 pub use client::X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER;
 mod event_mapping;
 pub mod review_format;

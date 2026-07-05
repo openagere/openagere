@@ -2116,6 +2116,39 @@ async fn model_selection_popup_snapshot() {
 }
 
 #[tokio::test]
+async fn model_selection_popup_marks_configured_custom_default_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("other-current")).await;
+    chat.thread_id = Some(ThreadId::new());
+    let preset = |slug: &str, is_default: bool| ModelPreset {
+        id: slug.to_string(),
+        model: slug.to_string(),
+        display_name: slug.to_string(),
+        description: format!("{slug} description"),
+        default_reasoning_effort: ReasoningEffortConfig::Medium,
+        supported_reasoning_efforts: vec![ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Medium,
+            description: "medium".to_string(),
+        }],
+        supports_personality: false,
+        additional_speed_tiers: Vec::new(),
+        is_default,
+        upgrade: None,
+        show_in_picker: true,
+        availability_nux: None,
+        supported_in_api: true,
+        input_modalities: default_input_modalities(),
+        context_window: None,
+    };
+    chat.open_model_popup_with_presets(vec![
+        preset("first-model", false),
+        preset("configured-default", true),
+    ]);
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("model_selection_popup_configured_custom_default", popup);
+}
+
+#[tokio::test]
 async fn personality_selection_popup_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.3")).await;
     chat.thread_id = Some(ThreadId::new());

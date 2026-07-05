@@ -6,6 +6,8 @@ use agere_login::AuthManager;
 use agere_login::ExternalAuth;
 use agere_login::ExternalAuthRefreshContext;
 use agere_login::ExternalAuthTokens;
+use agere_model_provider_info::WireApi;
+use agere_protocol::openai_models::InputModality;
 use agere_protocol::openai_models::ModelsResponse;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
@@ -17,6 +19,10 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tempfile::tempdir;
+
+use crate::catalog_overlay::CatalogModel;
+use crate::wire_api_catalog::WireApiCatalog;
+use crate::wire_api_catalog_client::WireApiCatalogClient;
 
 #[path = "model_info_overrides_tests.rs"]
 mod model_info_overrides_tests;
@@ -70,7 +76,6 @@ fn assert_models_contain(actual: &[ModelInfo], expected: &[ModelInfo]) {
 
 #[derive(Debug)]
 struct TestModelsEndpoint {
-    has_command_auth: bool,
     uses_agere_backend: bool,
     responses: Mutex<VecDeque<Vec<ModelInfo>>>,
     fetch_count: AtomicUsize,
@@ -79,7 +84,6 @@ struct TestModelsEndpoint {
 impl TestModelsEndpoint {
     fn new(responses: Vec<Vec<ModelInfo>>) -> Arc<Self> {
         Arc::new(Self {
-            has_command_auth: false,
             uses_agere_backend: true,
             responses: Mutex::new(responses.into()),
             fetch_count: AtomicUsize::new(0),
@@ -88,7 +92,14 @@ impl TestModelsEndpoint {
 
     fn without_refresh(responses: Vec<Vec<ModelInfo>>) -> Arc<Self> {
         Arc::new(Self {
-            has_command_auth: false,
+            uses_agere_backend: false,
+            responses: Mutex::new(responses.into()),
+            fetch_count: AtomicUsize::new(0),
+        })
+    }
+
+    fn with_provider_auth(responses: Vec<Vec<ModelInfo>>) -> Arc<Self> {
+        Arc::new(Self {
             uses_agere_backend: false,
             responses: Mutex::new(responses.into()),
             fetch_count: AtomicUsize::new(0),
@@ -97,6 +108,73 @@ impl TestModelsEndpoint {
 
     fn fetch_count(&self) -> usize {
         self.fetch_count.load(Ordering::SeqCst)
+    }
+}
+
+#[derive(Debug)]
+struct TestWireApiCatalogClient {
+    responses: Mutex<VecDeque<WireApiCatalog>>,
+    fetch_count: AtomicUsize,
+}
+
+impl TestWireApiCatalogClient {
+    fn new(responses: Vec<WireApiCatalog>) -> Arc<Self> {
+        Arc::new(Self {
+            responses: Mutex::new(responses.into()),
+            fetch_count: AtomicUsize::new(0),
+        })
+    }
+
+    fn fetch_count(&self) -> usize {
+        self.fetch_count.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl WireApiCatalogClient for TestWireApiCatalogClient {
+    async fn fetch(
+        &self,
+        _wire_api: WireApi,
+        _client_version: &str,
+        _etag: Option<&str>,
+    ) -> CoreResult<WireApiCatalog> {
+        self.fetch_count.fetch_add(1, Ordering::SeqCst);
+        Ok(self
+            .responses
+            .lock()
+            .expect("responses lock should not be poisoned")
+            .pop_front()
+            .expect("test wire api catalog response should be queued"))
+    }
+}
+
+#[derive(Debug)]
+struct PendingWireApiCatalogClient {
+    fetch_count: AtomicUsize,
+}
+
+impl PendingWireApiCatalogClient {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            fetch_count: AtomicUsize::new(0),
+        })
+    }
+
+    fn fetch_count(&self) -> usize {
+        self.fetch_count.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl WireApiCatalogClient for PendingWireApiCatalogClient {
+    async fn fetch(
+        &self,
+        _wire_api: WireApi,
+        _client_version: &str,
+        _etag: Option<&str>,
+    ) -> CoreResult<WireApiCatalog> {
+        self.fetch_count.fetch_add(1, Ordering::SeqCst);
+        std::future::pending().await
     }
 }
 
@@ -144,10 +222,6 @@ impl ExternalAuth for TestUnresolvedExternalApiKeyAuth {
 
 #[async_trait]
 impl ModelsEndpointClient for TestModelsEndpoint {
-    fn has_command_auth(&self) -> bool {
-        self.has_command_auth
-    }
-
     async fn uses_agere_backend(&self) -> bool {
         self.uses_agere_backend
     }
@@ -170,7 +244,7 @@ impl ModelsEndpointClient for TestModelsEndpoint {
 fn openai_manager_for_tests(
     agere_home: std::path::PathBuf,
     endpoint_client: Arc<dyn ModelsEndpointClient>,
-) -> OpenAiModelsManager {
+) -> WireApiModelsManager {
     openai_manager_for_tests_with_auth(
         agere_home,
         endpoint_client,
@@ -184,12 +258,27 @@ fn openai_manager_for_tests_with_auth(
     agere_home: std::path::PathBuf,
     endpoint_client: Arc<dyn ModelsEndpointClient>,
     auth_manager: Option<Arc<AuthManager>>,
-) -> OpenAiModelsManager {
-    OpenAiModelsManager::new(
+) -> WireApiModelsManager {
+    WireApiModelsManager::new(
         agere_home,
+        WireApi::Responses,
         endpoint_client,
         auth_manager,
         CollaborationModesConfig::default(),
+    )
+}
+
+fn openai_manager_for_tests_with_wire_api_catalog_client(
+    agere_home: std::path::PathBuf,
+    wire_api_catalog_client: Arc<dyn WireApiCatalogClient>,
+) -> WireApiModelsManager {
+    WireApiModelsManager::new_with_wire_api_catalog_client(
+        agere_home,
+        WireApi::Responses,
+        TestModelsEndpoint::without_refresh(Vec::new()),
+        /*auth_manager*/ None,
+        CollaborationModesConfig::default(),
+        wire_api_catalog_client,
     )
 }
 
@@ -198,7 +287,25 @@ fn static_manager_for_tests(model_catalog: ModelsResponse) -> StaticModelsManage
         /*auth_manager*/ None,
         model_catalog,
         CollaborationModesConfig::default(),
+        WireApi::Responses,
     )
+}
+
+async fn wait_for_fresh_wire_api_catalog(manager: &WireApiModelsManager) -> WireApiCatalog {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(catalog) = manager
+                .wire_api_catalog_cache
+                .load_fresh(WireApi::Responses)
+                .await
+            {
+                return catalog;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("wire api catalog cache should become fresh")
 }
 
 async fn chatgpt_auth_tokens_for_tests(agere_home: &Path) -> AgereAuth {
@@ -247,6 +354,160 @@ async fn get_model_info_tracks_fallback_usage() {
         .await;
     assert!(unknown.used_fallback_model_metadata);
     assert_eq!(unknown.slug, "model-that-does-not-exist");
+}
+
+#[tokio::test]
+async fn wire_api_overlay_catalog_fetches_and_persists_when_cache_missing() {
+    let agere_home = tempdir().expect("temp dir");
+    let mut catalog_model = remote_model("wire-api-image-model", "Wire Image", /*priority*/ 0);
+    catalog_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+    let catalog_client = TestWireApiCatalogClient::new(vec![WireApiCatalog {
+        etag: Some("\"wire-etag\"".to_string()),
+        catalog_version: Some("v1".to_string()),
+        models: vec![CatalogModel::from(catalog_model.clone())],
+    }]);
+    let manager = openai_manager_for_tests_with_wire_api_catalog_client(
+        agere_home.path().to_path_buf(),
+        catalog_client.clone(),
+    );
+
+    let catalog = manager.wire_api_overlay_catalog().await;
+
+    assert!(catalog.is_none());
+    let _ = manager
+        .raw_model_catalog(RefreshStrategy::OnlineIfUncached)
+        .await;
+    assert_eq!(
+        wait_for_fresh_wire_api_catalog(&manager).await.models,
+        vec![CatalogModel::from(catalog_model)]
+    );
+    assert_eq!(catalog_client.fetch_count(), 1);
+
+    let info = manager
+        .get_model_info("wire-api-image-model", &ModelsManagerConfig::default())
+        .await;
+    assert_eq!(
+        info.input_modalities,
+        Some(vec![InputModality::Text, InputModality::Image])
+    );
+}
+
+#[tokio::test]
+async fn get_model_info_does_not_wait_for_wire_api_catalog_fetch() {
+    let agere_home = tempdir().expect("temp dir");
+    let catalog_client = PendingWireApiCatalogClient::new();
+    let manager = openai_manager_for_tests_with_wire_api_catalog_client(
+        agere_home.path().to_path_buf(),
+        catalog_client.clone(),
+    );
+
+    let info = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        manager.get_model_info("wire-api-image-model", &ModelsManagerConfig::default()),
+    )
+    .await
+    .expect("model info lookup should not wait for remote catalog fetch");
+
+    assert_eq!(info.slug, "wire-api-image-model");
+    assert_eq!(info.input_modalities, Some(vec![InputModality::Text]));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(catalog_client.fetch_count(), 0);
+}
+
+#[tokio::test]
+async fn list_models_applies_cached_wire_api_overlay() {
+    let agere_home = tempdir().expect("temp dir");
+    let remote = remote_model("defaulted-list-modalities", "Defaulted List", 0);
+    assert_eq!(remote.input_modalities, None);
+    let manager = openai_manager_for_tests(
+        agere_home.path().to_path_buf(),
+        TestModelsEndpoint::new(vec![vec![remote]]),
+    );
+    let overlay = ModelInfo {
+        input_modalities: Some(vec![InputModality::Text]),
+        ..remote_model("defaulted-list-modalities", "Defaulted List", 0)
+    };
+    manager
+        .wire_api_catalog_cache
+        .persist(
+            WireApi::Responses,
+            &[overlay],
+            Some("\"wire-etag\"".to_string()),
+            crate::client_version_to_whole(),
+            Some("v1".to_string()),
+        )
+        .await;
+
+    let presets = manager.list_models(RefreshStrategy::Online).await;
+
+    let preset = presets
+        .iter()
+        .find(|preset| preset.model == "defaulted-list-modalities")
+        .expect("listed model should be present");
+    assert_eq!(preset.input_modalities, vec![InputModality::Text]);
+}
+
+#[tokio::test]
+async fn wire_api_overlay_catalog_renews_stale_cache_after_not_modified() {
+    let agere_home = tempdir().expect("temp dir");
+    let mut catalog_model = remote_model("wire-api-cached-model", "Cached", /*priority*/ 0);
+    catalog_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+    let catalog_client = TestWireApiCatalogClient::new(vec![WireApiCatalog {
+        etag: Some("\"wire-etag\"".to_string()),
+        catalog_version: None,
+        models: Vec::new(),
+    }]);
+    let manager = openai_manager_for_tests_with_wire_api_catalog_client(
+        agere_home.path().to_path_buf(),
+        catalog_client.clone(),
+    );
+    manager
+        .wire_api_catalog_cache
+        .persist(
+            WireApi::Responses,
+            &[catalog_model.clone()],
+            Some("\"wire-etag\"".to_string()),
+            crate::client_version_to_whole(),
+            Some("v1".to_string()),
+        )
+        .await;
+    let cache_path = manager.wire_api_catalog_cache.path_for(WireApi::Responses);
+    let mut cache_json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&cache_path).expect("wire api catalog cache should be readable"),
+    )
+    .expect("wire api catalog cache should parse");
+    cache_json["fetched_at"] =
+        serde_json::Value::String((Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
+    std::fs::write(
+        &cache_path,
+        serde_json::to_vec_pretty(&cache_json).expect("cache json should serialize"),
+    )
+    .expect("wire api catalog cache should be rewritable");
+
+    let catalog = manager
+        .wire_api_overlay_catalog()
+        .await
+        .expect("stale catalog should be used after not modified");
+
+    assert_eq!(
+        catalog.models,
+        vec![CatalogModel::from(catalog_model.clone())]
+    );
+    let _ = manager
+        .raw_model_catalog(RefreshStrategy::OnlineIfUncached)
+        .await;
+    assert_eq!(
+        wait_for_fresh_wire_api_catalog(&manager).await.models,
+        vec![CatalogModel::from(catalog_model)]
+    );
+    assert_eq!(catalog_client.fetch_count(), 1);
+
+    let cached_catalog = manager
+        .wire_api_overlay_catalog()
+        .await
+        .expect("renewed catalog should be fresh");
+    assert_eq!(cached_catalog.models.len(), 1);
+    assert_eq!(catalog_client.fetch_count(), 1);
 }
 
 #[tokio::test]
@@ -370,6 +631,204 @@ async fn refresh_available_models_uses_cache_when_fresh() {
     );
 }
 
+fn static_manager_for_tests_with_wire_api(
+    model_catalog: ModelsResponse,
+    wire_api: WireApi,
+) -> StaticModelsManager {
+    StaticModelsManager::new(
+        /*auth_manager*/ None,
+        model_catalog,
+        CollaborationModesConfig::default(),
+        wire_api,
+    )
+}
+
+fn static_manager_for_tests_with_wire_api_cache(
+    model_catalog: ModelsResponse,
+    wire_api: WireApi,
+    agere_home: &Path,
+) -> StaticModelsManager {
+    StaticModelsManager::new_with_wire_api_catalog_cache(
+        /*auth_manager*/ None,
+        model_catalog,
+        CollaborationModesConfig::default(),
+        wire_api,
+        agere_home.to_path_buf(),
+    )
+}
+
+#[tokio::test]
+async fn static_manager_get_model_info_applies_cached_wire_api_overlay() {
+    let agere_home = tempdir().expect("temp dir");
+    let mut provider_model = remote_model("qwen3.7-plus", "Provider Qwen", /*priority*/ 0);
+    provider_model.context_window = Some(1_000_000);
+    provider_model.max_context_window = Some(1_000_000);
+    provider_model.input_modalities = None;
+
+    let mut overlay_model = remote_model("qwen3.7-plus", "Catalog Qwen", /*priority*/ 99);
+    overlay_model.context_window = Some(123);
+    overlay_model.max_context_window = Some(123);
+    overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+    WireApiCatalogCache::new(
+        agere_home.path().to_path_buf(),
+        std::time::Duration::from_secs(300),
+    )
+    .persist(
+        WireApi::Anthropic,
+        &[overlay_model],
+        None,
+        crate::client_version_to_whole(),
+        Some("test".to_string()),
+    )
+    .await;
+
+    let manager = static_manager_for_tests_with_wire_api_cache(
+        ModelsResponse {
+            models: vec![provider_model.clone()],
+        },
+        WireApi::Anthropic,
+        agere_home.path(),
+    );
+
+    let info = manager
+        .get_model_info("qwen3.7-plus", &ModelsManagerConfig::default())
+        .await;
+
+    let mut expected = provider_model;
+    expected.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+    assert_eq!(info, expected);
+}
+
+#[tokio::test]
+async fn static_manager_get_model_info_preserves_explicit_provider_modalities() {
+    let agere_home = tempdir().expect("temp dir");
+    let mut provider_model = remote_model("qwen3.7-plus", "Provider Qwen", /*priority*/ 0);
+    provider_model.input_modalities = Some(vec![InputModality::Text]);
+
+    let mut overlay_model = remote_model("qwen3.7-plus", "Catalog Qwen", /*priority*/ 99);
+    overlay_model.input_modalities = Some(vec![InputModality::Text, InputModality::Image]);
+    WireApiCatalogCache::new(
+        agere_home.path().to_path_buf(),
+        std::time::Duration::from_secs(300),
+    )
+    .persist(
+        WireApi::Anthropic,
+        &[overlay_model],
+        None,
+        crate::client_version_to_whole(),
+        Some("test".to_string()),
+    )
+    .await;
+
+    let manager = static_manager_for_tests_with_wire_api_cache(
+        ModelsResponse {
+            models: vec![provider_model.clone()],
+        },
+        WireApi::Anthropic,
+        agere_home.path(),
+    );
+
+    let info = manager
+        .get_model_info("qwen3.7-plus", &ModelsManagerConfig::default())
+        .await;
+
+    assert_eq!(info, provider_model);
+}
+
+#[tokio::test]
+async fn static_manager_list_models_applies_cached_wire_api_overlay() {
+    let agere_home = tempdir().expect("temp dir");
+    let provider_model = ModelInfo {
+        input_modalities: None,
+        ..remote_model("qwen3.7-plus", "Provider Qwen", /*priority*/ 0)
+    };
+    let overlay_model = ModelInfo {
+        input_modalities: Some(vec![InputModality::Text, InputModality::Image]),
+        ..remote_model("qwen3.7-plus", "Catalog Qwen", /*priority*/ 99)
+    };
+    WireApiCatalogCache::new(
+        agere_home.path().to_path_buf(),
+        std::time::Duration::from_secs(300),
+    )
+    .persist(
+        WireApi::Anthropic,
+        &[overlay_model],
+        None,
+        crate::client_version_to_whole(),
+        Some("test".to_string()),
+    )
+    .await;
+
+    let manager = static_manager_for_tests_with_wire_api_cache(
+        ModelsResponse {
+            models: vec![provider_model],
+        },
+        WireApi::Anthropic,
+        agere_home.path(),
+    );
+
+    let presets = manager.list_models(RefreshStrategy::Offline).await;
+
+    assert_eq!(
+        presets
+            .iter()
+            .map(|preset| (preset.model.as_str(), preset.input_modalities.clone()))
+            .collect::<Vec<_>>(),
+        vec![(
+            "qwen3.7-plus",
+            vec![InputModality::Text, InputModality::Image]
+        )]
+    );
+}
+
+#[tokio::test]
+async fn static_manager_try_list_models_applies_cached_wire_api_overlay() {
+    let agere_home = tempdir().expect("temp dir");
+    let provider_model = ModelInfo {
+        input_modalities: None,
+        ..remote_model("qwen3.7-plus", "Provider Qwen", /*priority*/ 0)
+    };
+    let overlay_model = ModelInfo {
+        input_modalities: Some(vec![InputModality::Text, InputModality::Image]),
+        ..remote_model("qwen3.7-plus", "Catalog Qwen", /*priority*/ 99)
+    };
+    WireApiCatalogCache::new(
+        agere_home.path().to_path_buf(),
+        std::time::Duration::from_secs(300),
+    )
+    .persist(
+        WireApi::Anthropic,
+        &[overlay_model],
+        None,
+        crate::client_version_to_whole(),
+        Some("test".to_string()),
+    )
+    .await;
+
+    let manager = static_manager_for_tests_with_wire_api_cache(
+        ModelsResponse {
+            models: vec![provider_model],
+        },
+        WireApi::Anthropic,
+        agere_home.path(),
+    );
+
+    let presets = manager
+        .try_list_models()
+        .expect("static try_list_models should not block");
+
+    assert_eq!(
+        presets
+            .iter()
+            .map(|preset| (preset.model.as_str(), preset.input_modalities.clone()))
+            .collect::<Vec<_>>(),
+        vec![(
+            "qwen3.7-plus",
+            vec![InputModality::Text, InputModality::Image]
+        )]
+    );
+}
+
 #[tokio::test]
 async fn refresh_available_models_refetches_when_cache_stale() {
     let initial_models = vec![remote_model("stale", "Stale", /*priority*/ 1)];
@@ -484,6 +943,44 @@ async fn refresh_available_models_drops_removed_remote_models() {
 }
 
 #[tokio::test]
+async fn provider_auth_refresh_skips_network_for_non_agere_backends() {
+    let provider_model = remote_model(
+        "custom-provider-only-model",
+        "Custom Provider",
+        /*priority*/ 1,
+    );
+    let agere_home = tempdir().expect("temp dir");
+    let endpoint = TestModelsEndpoint::with_provider_auth(vec![vec![provider_model.clone()]]);
+    let manager = openai_manager_for_tests_with_auth(
+        agere_home.path().to_path_buf(),
+        endpoint.clone(),
+        /*auth_manager*/ None,
+    );
+
+    manager
+        .refresh_available_models(RefreshStrategy::Online)
+        .await
+        .expect("provider-auth refresh should no-op");
+
+    let remote_models = manager.get_remote_models().await;
+    assert!(
+        !remote_models
+            .iter()
+            .any(|model| model.slug == provider_model.slug)
+    );
+
+    let available = manager
+        .try_list_models()
+        .expect("models should be available");
+    assert!(
+        !available
+            .iter()
+            .any(|preset| preset.model == provider_model.slug)
+    );
+    assert_eq!(endpoint.fetch_count(), 0);
+}
+
+#[tokio::test]
 async fn refresh_available_models_skips_network_without_chatgpt_auth() {
     let dynamic_slug = "dynamic-model-only-for-test-noauth";
     let agere_home = tempdir().expect("temp dir");
@@ -539,10 +1036,6 @@ impl TestAuthAwareModelsEndpoint {
 
 #[async_trait]
 impl ModelsEndpointClient for TestAuthAwareModelsEndpoint {
-    fn has_command_auth(&self) -> bool {
-        false
-    }
-
     async fn uses_agere_backend(&self) -> bool {
         match self.auth_manager.as_ref() {
             Some(auth_manager) => auth_manager
@@ -691,8 +1184,18 @@ fn build_available_models_picks_default_after_hiding_hidden_models() {
     let visible_model =
         remote_model_with_visibility("visible", "Visible", /*priority*/ 1, "list");
 
-    let expected_hidden = ModelPreset::from(hidden_model.clone());
-    let mut expected_visible = ModelPreset::from(visible_model.clone());
+    let expected_hidden = ModelPreset::from(
+        crate::model_info::with_effective_input_modalities_for_wire_api(
+            hidden_model.clone(),
+            WireApi::Responses,
+        ),
+    );
+    let mut expected_visible = ModelPreset::from(
+        crate::model_info::with_effective_input_modalities_for_wire_api(
+            visible_model.clone(),
+            WireApi::Responses,
+        ),
+    );
     expected_visible.is_default = true;
 
     let available = manager.build_available_models(vec![hidden_model, visible_model]);
@@ -716,6 +1219,7 @@ async fn static_manager_filters_unsupported_api_models() {
             models: vec![chatgpt_only_model, api_model],
         },
         CollaborationModesConfig::default(),
+        WireApi::Responses,
     );
 
     // With simplified auth (API key only), models with supported_in_api=false
@@ -774,4 +1278,74 @@ fn bundled_models_use_agere_identity_in_base_instructions() {
             model.slug
         );
     }
+}
+
+#[tokio::test]
+async fn get_model_info_uses_model_catalog_json_as_overlay() {
+    let config_model = ModelInfo {
+        input_modalities: Some(vec![InputModality::Text]),
+        ..remote_model("overlay-only", "Overlay Only", 0)
+    };
+    let config = ModelsManagerConfig {
+        model_catalog: Some(ModelsResponse {
+            models: vec![config_model],
+        }),
+        ..Default::default()
+    };
+    let manager = static_manager_for_tests_with_wire_api(
+        ModelsResponse { models: Vec::new() },
+        WireApi::Responses,
+    );
+
+    let info = manager.get_model_info("overlay-only", &config).await;
+
+    assert_eq!(info.input_modalities, Some(vec![InputModality::Text]));
+    assert!(info.used_fallback_model_metadata);
+}
+
+#[tokio::test]
+async fn get_model_info_uses_overlay_to_correct_defaulted_remote_modalities() {
+    let remote = remote_model("defaulted-modalities", "Defaulted Modalities", 0);
+    assert_eq!(remote.input_modalities, None);
+    assert!(!remote.used_fallback_model_metadata);
+
+    let config_model = ModelInfo {
+        input_modalities: Some(vec![InputModality::Text]),
+        ..remote_model("defaulted-modalities", "Defaulted Modalities", 0)
+    };
+    let config = ModelsManagerConfig {
+        model_catalog: Some(ModelsResponse {
+            models: vec![config_model],
+        }),
+        ..Default::default()
+    };
+    let manager = static_manager_for_tests_with_wire_api(
+        ModelsResponse {
+            models: vec![remote],
+        },
+        WireApi::Responses,
+    );
+
+    let info = manager
+        .get_model_info("defaulted-modalities", &config)
+        .await;
+
+    assert_eq!(info.input_modalities, Some(vec![InputModality::Text]));
+    assert!(!info.used_fallback_model_metadata);
+}
+
+#[tokio::test]
+async fn get_model_info_fallback_is_text_only_for_wire_api() {
+    let config = ModelsManagerConfig::default();
+    let manager = static_manager_for_tests_with_wire_api(
+        ModelsResponse { models: Vec::new() },
+        WireApi::Anthropic,
+    );
+
+    let info = manager
+        .get_model_info("unknown-anthropic-model", &config)
+        .await;
+
+    assert_eq!(info.input_modalities, Some(vec![InputModality::Text]));
+    assert!(info.used_fallback_model_metadata);
 }

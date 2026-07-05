@@ -7,7 +7,6 @@ use agere_protocol::config_types::WindowsExecutionRestrictionLevel;
 use agere_protocol::models::PermissionProfile;
 use agere_protocol::openai_models::ApplyPatchToolType;
 use agere_protocol::openai_models::ConfigShellToolType;
-use agere_protocol::openai_models::InputModality;
 use agere_protocol::openai_models::ModelInfo;
 use agere_protocol::openai_models::ModelPreset;
 use agere_protocol::openai_models::WebSearchToolType;
@@ -347,7 +346,7 @@ impl ToolsConfig {
 }
 
 fn supports_image_generation(model_info: &ModelInfo) -> bool {
-    model_info.input_modalities.contains(&InputModality::Image)
+    model_info.supports_image_input()
 }
 
 fn unified_exec_allowed_in_environment(

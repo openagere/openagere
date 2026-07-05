@@ -2087,10 +2087,12 @@ mod tests {
                 agere_config::config_toml::ModelConfig {
                     name: "model-a".to_string(),
                     context_window: Some(128_000),
+                    input_modalities: None,
                 },
                 agere_config::config_toml::ModelConfig {
                     name: "model-b".to_string(),
                     context_window: None,
+                    input_modalities: None,
                 },
             ]
         );

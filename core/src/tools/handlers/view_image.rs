@@ -4,7 +4,6 @@ use agere_protocol::models::FunctionCallOutputContentItem;
 use agere_protocol::models::FunctionCallOutputPayload;
 use agere_protocol::models::ImageDetail;
 use agere_protocol::models::ResponseInputItem;
-use agere_protocol::openai_models::InputModality;
 use agere_utils_image::PromptImageMode;
 use agere_utils_image::load_for_prompt_bytes;
 use serde::Deserialize;
@@ -44,12 +43,7 @@ impl ToolHandler for ViewImageHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        if !invocation
-            .turn
-            .model_info
-            .input_modalities
-            .contains(&InputModality::Image)
-        {
+        if !invocation.turn.model_info.supports_image_input() {
             return Err(FunctionCallError::RespondToModel(
                 VIEW_IMAGE_UNSUPPORTED_MESSAGE.to_string(),
             ));

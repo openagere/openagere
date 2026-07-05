@@ -119,16 +119,22 @@ pub fn load_anthropic_config_from_file(path: &std::path::Path) -> std::io::Resul
         if let Some(base_url) = anthropic.get("base_url").and_then(|v| v.as_str()) {
             config.base_url = base_url.to_string();
         }
-        if let Some(max_tokens) = anthropic.get("max_tokens").and_then(|v| v.as_integer()) {
+        if let Some(max_tokens) = anthropic
+            .get("max_tokens")
+            .and_then(toml::Value::as_integer)
+        {
             config.max_tokens = max_tokens as u32;
         }
         if let Some(timeout_ms) = anthropic
             .get("stream_idle_timeout_ms")
-            .and_then(|v| v.as_integer())
+            .and_then(toml::Value::as_integer)
         {
             config.stream_idle_timeout_ms = timeout_ms as u64;
         }
-        if let Some(retries) = anthropic.get("max_retries").and_then(|v| v.as_integer()) {
+        if let Some(retries) = anthropic
+            .get("max_retries")
+            .and_then(toml::Value::as_integer)
+        {
             config.max_retries = retries as u64;
         }
     }

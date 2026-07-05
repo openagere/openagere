@@ -327,9 +327,12 @@ pub struct ModelInfo {
     #[serde(default = "default_effective_context_window_percent")]
     pub effective_context_window_percent: i64,
     pub experimental_supported_tools: Vec<String>,
-    /// Input modalities accepted by the backend for this model.
-    #[serde(default = "default_input_modalities")]
-    pub input_modalities: Vec<InputModality>,
+    /// Input modalities explicitly declared by the backend for this model.
+    ///
+    /// When omitted, callers should use `effective_input_modalities()` for the legacy-compatible
+    /// default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<InputModality>>,
     /// Internal-only marker set by core when a model slug resolved to fallback metadata.
     #[serde(default, skip_serializing, skip_deserializing)]
     #[schemars(skip)]
@@ -340,6 +343,18 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
+    pub fn effective_input_modalities(&self) -> Vec<InputModality> {
+        self.input_modalities
+            .clone()
+            .unwrap_or_else(default_input_modalities)
+    }
+
+    pub fn supports_image_input(&self) -> bool {
+        self.input_modalities
+            .as_ref()
+            .is_none_or(|modalities| modalities.contains(&InputModality::Image))
+    }
+
     pub fn resolved_context_window(&self) -> Option<i64> {
         self.context_window.or(self.max_context_window)
     }
@@ -468,6 +483,7 @@ pub struct ModelsResponse {
 impl From<ModelInfo> for ModelPreset {
     fn from(info: ModelInfo) -> Self {
         let supports_personality = info.supports_personality();
+        let input_modalities = info.effective_input_modalities();
         ModelPreset {
             id: info.slug.clone(),
             model: info.slug.clone(),
@@ -494,7 +510,7 @@ impl From<ModelInfo> for ModelPreset {
             show_in_picker: info.visibility == ModelVisibility::List,
             availability_nux: info.availability_nux,
             supported_in_api: info.supported_in_api,
-            input_modalities: info.input_modalities,
+            input_modalities,
             context_window: info.context_window,
         }
     }
@@ -605,7 +621,7 @@ mod tests {
             auto_compact_token_limit: None,
             effective_context_window_percent: 95,
             experimental_supported_tools: vec![],
-            input_modalities: default_input_modalities(),
+            input_modalities: Some(default_input_modalities()),
             used_fallback_model_metadata: false,
             supports_search_tool: false,
         }
@@ -825,6 +841,44 @@ mod tests {
         assert!(!model.supports_image_detail_original);
         assert_eq!(model.web_search_tool_type, WebSearchToolType::Text);
         assert!(!model.supports_search_tool);
+        assert_eq!(
+            model.input_modalities,
+            Some(vec![InputModality::Text, InputModality::Image])
+        );
+    }
+
+    #[test]
+    fn model_info_preserves_omitted_input_modalities_as_none() {
+        let mut value = serde_json::to_value(test_model(/*spec*/ None)).expect("serialize model");
+        value
+            .as_object_mut()
+            .expect("model json should be an object")
+            .remove("input_modalities");
+
+        let model: ModelInfo = serde_json::from_value(value).expect("deserialize model info");
+
+        assert_eq!(model.input_modalities, None);
+        assert_eq!(
+            model.effective_input_modalities(),
+            default_input_modalities()
+        );
+    }
+
+    #[test]
+    fn model_info_preserves_omitted_input_modalities_through_json_roundtrip() {
+        let mut model = test_model(/*spec*/ None);
+        model.input_modalities = None;
+
+        let value = serde_json::to_value(&model).expect("serialize model info");
+        assert!(value.get("input_modalities").is_none());
+
+        let roundtripped: ModelInfo =
+            serde_json::from_value(value).expect("deserialize model info");
+        assert_eq!(roundtripped.input_modalities, None);
+        assert_eq!(
+            roundtripped.effective_input_modalities(),
+            default_input_modalities()
+        );
     }
 
     #[test]

@@ -21,15 +21,7 @@ pub fn unauthenticated_auth_provider() -> SharedAuthProvider {
     Arc::new(UnauthenticatedAuthProvider)
 }
 
-/// Returns the auth manager for the provider (always the base manager in simplified auth).
-pub(crate) fn auth_manager_for_provider(
-    auth_manager: Option<Arc<agere_login::AuthManager>>,
-    _provider: &ModelProviderInfo,
-) -> Option<Arc<agere_login::AuthManager>> {
-    auth_manager
-}
-
-pub(crate) fn resolve_provider_auth(
+pub(crate) async fn resolve_provider_auth(
     auth: Option<&AgereAuth>,
     provider: &ModelProviderInfo,
 ) -> agere_protocol::error::Result<SharedAuthProvider> {
@@ -43,15 +35,26 @@ pub(crate) fn resolve_provider_auth(
     })
 }
 
-fn bearer_auth_for_provider(
+pub(crate) fn provider_has_bearer_auth_config(provider: &ModelProviderInfo) -> bool {
+    provider
+        .experimental_bearer_token
+        .as_deref()
+        .is_some_and(|token| !token.trim().is_empty())
+        || provider
+            .env_key
+            .as_deref()
+            .is_some_and(|env_key| !env_key.trim().is_empty())
+}
+
+pub(crate) fn bearer_auth_for_provider(
     provider: &ModelProviderInfo,
 ) -> agere_protocol::error::Result<Option<BearerAuthProvider>> {
     // Priority: experimental_bearer_token > env_key environment variable
     // This allows provider.toml's api_key to work even if env_key is configured.
-    if let Some(ref token) = provider.experimental_bearer_token {
-        if !token.trim().is_empty() {
-            return Ok(Some(BearerAuthProvider::new(token.clone())));
-        }
+    if let Some(ref token) = provider.experimental_bearer_token
+        && !token.trim().is_empty()
+    {
+        return Ok(Some(BearerAuthProvider::new(token.clone())));
     }
 
     // Try env_key environment variable only if experimental_bearer_token is not set.
@@ -78,11 +81,13 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn unauthenticated_auth_provider_adds_no_headers() {
+    #[tokio::test]
+    async fn unauthenticated_auth_provider_adds_no_headers() {
         let provider =
             create_oss_provider_with_base_url("http://localhost:11434/v1", WireApi::Responses);
-        let auth = resolve_provider_auth(/*auth*/ None, &provider).expect("auth should resolve");
+        let auth = resolve_provider_auth(/*auth*/ None, &provider)
+            .await
+            .expect("auth should resolve");
 
         assert!(auth.to_auth_headers().is_empty());
     }

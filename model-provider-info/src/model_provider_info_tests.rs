@@ -1,8 +1,6 @@
 use super::*;
-use agere_utils_fs::AbsolutePathBuf;
 use agere_utils_fs::AbsolutePathBufGuard;
 use pretty_assertions::assert_eq;
-use std::num::NonZeroU64;
 use tempfile::tempdir;
 
 #[test]
@@ -180,7 +178,7 @@ fn test_supports_remote_compaction_for_non_openai_non_azure_provider() {
 }
 
 #[test]
-fn test_deserialize_provider_auth_config_defaults() {
+fn test_deserialize_provider_auth_config_is_rejected() {
     let base_dir = tempdir().unwrap();
     let provider_toml = r#"
 [auth]
@@ -194,14 +192,8 @@ args = ["--format=text"]
     };
 
     assert_eq!(
-        provider.auth,
-        Some(ModelProviderAuthInfo {
-            command: "./scripts/print-token".to_string(),
-            args: vec!["--format=text".to_string()],
-            timeout_ms: NonZeroU64::new(5_000).unwrap(),
-            refresh_interval_ms: 300_000,
-            cwd: AbsolutePathBuf::resolve_path_against_base(".", base_dir.path()),
-        })
+        provider.validate(),
+        Err("provider auth is not supported; use env_key or experimental_bearer_token".to_string())
     );
 }
 
@@ -403,25 +395,6 @@ fn test_validate_provider_aws_rejects_websockets() {
     );
 }
 
-#[test]
-fn test_deserialize_provider_auth_config_allows_zero_refresh_interval() {
-    let base_dir = tempdir().unwrap();
-    let provider_toml = r#"
-[auth]
-command = "./scripts/print-token"
-refresh_interval_ms = 0
-        "#;
-
-    let provider: ModelProviderInfo = {
-        let _guard = AbsolutePathBufGuard::new(base_dir.path());
-        toml::from_str(provider_toml).unwrap()
-    };
-
-    let auth = provider.auth.expect("auth config should deserialize");
-    assert_eq!(auth.refresh_interval_ms, 0);
-    assert_eq!(auth.refresh_interval(), None);
-}
-
 // ─── Thinking signature proxy detection ─────────────────────────────
 
 #[test]
@@ -505,9 +478,9 @@ fn supports_apply_patch_freeform_openrouter_false() {
 
 #[test]
 fn supports_apply_patch_freeform_no_base_url() {
-    // Default name is "" (not "OpenAI"), so fallback to is_openai() returns false
     let info = ModelProviderInfo {
         base_url: None,
+        wire_api: WireApi::Anthropic,
         ..Default::default()
     };
     assert!(!info.supports_apply_patch_freeform());

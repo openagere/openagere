@@ -65,7 +65,7 @@ fn gpt_5_4_cmb_bedrock_model(priority: i32) -> ModelInfo {
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: vec![InputModality::Text, InputModality::Image],
+        input_modalities: Some(vec![InputModality::Text, InputModality::Image]),
         used_fallback_model_metadata: false,
         supports_search_tool: true,
     }
@@ -105,7 +105,7 @@ fn bedrock_oss_model(slug: &str, display_name: &str, priority: i32) -> ModelInfo
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: vec![InputModality::Text],
+        input_modalities: Some(vec![InputModality::Text]),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     }

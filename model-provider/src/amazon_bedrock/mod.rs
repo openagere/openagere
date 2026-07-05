@@ -90,14 +90,16 @@ impl ModelProvider for AmazonBedrockModelProvider {
 
     fn models_manager(
         &self,
-        _agere_home: PathBuf,
+        agere_home: PathBuf,
         config_model_catalog: Option<ModelsResponse>,
         collaboration_modes_config: CollaborationModesConfig,
     ) -> SharedModelsManager {
-        Arc::new(StaticModelsManager::new(
+        Arc::new(StaticModelsManager::new_with_wire_api_catalog_cache(
             /*auth_manager*/ None,
             config_model_catalog.unwrap_or_else(catalog::static_model_catalog),
             collaboration_modes_config,
+            self.info.wire_api,
+            agere_home,
         ))
     }
 }

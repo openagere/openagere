@@ -658,7 +658,7 @@ fn request_permissions_tool_is_independent_from_additional_permissions() {
 fn image_generation_tools_require_feature_and_supported_model() {
     let supported_model_info = model_info();
     let mut unsupported_model_info = supported_model_info.clone();
-    unsupported_model_info.input_modalities = vec![InputModality::Text];
+    unsupported_model_info.input_modalities = Some(vec![InputModality::Text]);
     let mut image_generation_disabled_features = Features::with_defaults();
     image_generation_disabled_features.disable(Feature::ImageGeneration);
     let mut image_generation_features = Features::with_defaults();

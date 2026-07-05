@@ -6,6 +6,7 @@
 //! Failure to fetch falls back to locale-appropriate embedded JSON.
 
 use agere_config::config_toml::ModelConfig;
+use agere_login::default_client::build_reqwest_client;
 use agere_model_provider_info::WireApi;
 use serde::Deserialize;
 use serde::Serialize;
@@ -75,6 +76,7 @@ fn builtin_templates_for(region: crate::region::Region) -> Vec<ProviderTemplate>
             models: vec![ModelConfig {
                 name: "gpt-4o".to_string(),
                 context_window: Some(200_000),
+                input_modalities: None,
             }],
         });
     }
@@ -106,12 +108,7 @@ fn providers_url() -> &'static str {
 fn http_client() -> &'static reqwest::Client {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(FETCH_TIMEOUT)
-            .build()
-            .expect("failed to build HTTP client")
-    })
+    CLIENT.get_or_init(build_reqwest_client)
 }
 
 /// Fetch the remote providers list with single-entry fault tolerance.
@@ -122,7 +119,12 @@ fn http_client() -> &'static reqwest::Client {
 pub(crate) async fn fetch_remote_templates() -> Result<Vec<ProviderTemplate>, String> {
     let url = providers_url();
     let client = http_client();
-    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(url)
+        .timeout(FETCH_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {status}", status = resp.status()));
     }
@@ -260,6 +262,7 @@ mod tests {
     use wiremock::Mock;
     use wiremock::MockServer;
     use wiremock::ResponseTemplate;
+    use wiremock::matchers::header;
     use wiremock::matchers::method;
     use wiremock::matchers::path;
 
@@ -318,6 +321,7 @@ mod tests {
     #[serial]
     async fn fetch_decodes_full_payload() {
         let server = MockServer::start().await;
+        let originator = agere_login::default_client::originator().value;
         let body = serde_json::json!({
             "providers": [
                 {
@@ -333,6 +337,7 @@ mod tests {
         });
         Mock::given(method("GET"))
             .and(path("/providers.json"))
+            .and(header("originator", originator.as_str()))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
             .await;

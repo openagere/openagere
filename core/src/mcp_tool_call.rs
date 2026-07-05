@@ -45,7 +45,6 @@ use agere_mcp::declared_openai_file_input_param_names;
 use agere_mcp::mcp_permission_prompt_is_auto_approved;
 use agere_otel::sanitize_metric_tag_value;
 use agere_protocol::mcp::CallToolResult;
-use agere_protocol::openai_models::InputModality;
 use agere_protocol::protocol::EventMsg;
 use agere_protocol::protocol::McpInvocation;
 use agere_protocol::protocol::McpToolCallBeginEvent;
@@ -548,13 +547,7 @@ async fn execute_mcp_tool_call(
         .call_tool(server, tool_name, rewritten_arguments, request_meta)
         .await
         .map_err(|e| format!("tool call error: {e:?}"))?;
-    sanitize_mcp_tool_result_for_model(
-        turn_context
-            .model_info
-            .input_modalities
-            .contains(&InputModality::Image),
-        Ok(result),
-    )
+    sanitize_mcp_tool_result_for_model(turn_context.model_info.supports_image_input(), Ok(result))
 }
 
 #[expect(

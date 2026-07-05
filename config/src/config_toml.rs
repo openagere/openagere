@@ -47,6 +47,7 @@ use agere_protocol::config_types::WebSearchMode;
 use agere_protocol::config_types::WebSearchToolConfig;
 use agere_protocol::config_types::WindowsExecutionRestrictionLevel;
 use agere_protocol::models::PermissionProfile;
+use agere_protocol::openai_models::InputModality;
 use agere_protocol::openai_models::ReasoningEffort;
 use agere_protocol::permissions::NetworkAccessPolicy;
 use agere_protocol::protocol::AskForApproval;
@@ -67,6 +68,10 @@ pub struct ModelConfig {
     pub name: String,
     /// Context window size in tokens. Defaults to 200000 when omitted.
     pub context_window: Option<i64>,
+    /// Input modalities explicitly supported by this configured model. When omitted, model
+    /// capabilities may be filled from the wire API catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<InputModality>>,
 }
 
 /// Base config deserialized from ~/.openagere/config.toml.

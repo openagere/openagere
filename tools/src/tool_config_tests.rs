@@ -210,7 +210,7 @@ fn review_subagents_do_not_receive_goal_tools() {
 fn image_generation_requires_feature_and_supported_model() {
     let supported_model_info = model_info();
     let mut unsupported_model_info = supported_model_info.clone();
-    unsupported_model_info.input_modalities = vec![InputModality::Text];
+    unsupported_model_info.input_modalities = Some(vec![InputModality::Text]);
 
     let mut image_generation_disabled_features = Features::with_defaults();
     image_generation_disabled_features.disable(Feature::ImageGeneration);

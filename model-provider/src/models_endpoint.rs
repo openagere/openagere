@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use agere_api::ApiError;
 use agere_api::ModelsClient;
 use agere_api::RequestTelemetry;
 use agere_api::ReqwestTransport;
@@ -17,7 +18,6 @@ use agere_login::default_client::build_reqwest_client;
 use agere_model_provider_info::ModelProviderInfo;
 use agere_models_manager::manager::ModelsEndpointClient;
 use agere_otel::TelemetryAuthMode;
-use agere_protocol::error::AgereErr;
 use agere_protocol::error::Result as CoreResult;
 use agere_protocol::openai_models::ModelInfo;
 use agere_response_debug_context::extract_response_debug_context;
@@ -26,6 +26,7 @@ use async_trait::async_trait;
 use http::HeaderMap;
 use tokio::time::timeout;
 
+use crate::auth::provider_has_bearer_auth_config;
 use crate::auth::resolve_provider_auth;
 
 const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -67,11 +68,15 @@ impl OpenAiModelsEndpoint {
 
 #[async_trait]
 impl ModelsEndpointClient for OpenAiModelsEndpoint {
-    fn has_command_auth(&self) -> bool {
-        self.provider_info.has_command_auth()
+    fn can_refresh_without_agere_backend(&self) -> bool {
+        false
     }
 
     async fn uses_agere_backend(&self) -> bool {
+        if provider_has_bearer_auth_config(&self.provider_info) {
+            return false;
+        }
+
         self.auth()
             .await
             .as_ref()
@@ -87,8 +92,7 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         let auth = self.auth().await;
         let auth_mode = auth.as_ref().map(AgereAuth::auth_mode);
         let api_provider = self.provider_info.to_api_provider(auth_mode)?;
-        let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
-        let transport = ReqwestTransport::new(build_reqwest_client());
+        let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info).await?;
         let auth_telemetry = auth_header_telemetry(api_auth.as_ref());
         let request_telemetry: Arc<dyn RequestTelemetry> = Arc::new(ModelsRequestTelemetry {
             auth_mode: auth_mode.map(|mode| TelemetryAuthMode::from(mode).to_string()),
@@ -96,17 +100,28 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
             auth_header_name: auth_telemetry.name,
             auth_env: self.auth_env(),
         });
-        let client = ModelsClient::new(transport, api_provider, api_auth)
-            .with_telemetry(Some(request_telemetry));
-
-        timeout(
-            MODELS_REFRESH_TIMEOUT,
-            client.list_models(client_version, HeaderMap::new()),
-        )
-        .await
-        .map_err(|_| AgereErr::Timeout)?
-        .map_err(map_api_error)
+        list_models_once(client_version, api_provider, api_auth, request_telemetry)
+            .await
+            .map_err(map_api_error)
     }
+}
+
+async fn list_models_once(
+    client_version: &str,
+    api_provider: agere_api::Provider,
+    api_auth: agere_api::SharedAuthProvider,
+    request_telemetry: Arc<dyn RequestTelemetry>,
+) -> Result<(Vec<ModelInfo>, Option<String>), ApiError> {
+    let transport = ReqwestTransport::new(build_reqwest_client());
+    let client = ModelsClient::new(transport, api_provider, api_auth)
+        .with_telemetry(Some(request_telemetry));
+
+    timeout(
+        MODELS_REFRESH_TIMEOUT,
+        client.list_models(client_version, HeaderMap::new()),
+    )
+    .await
+    .map_err(|_| ApiError::Transport(TransportError::Timeout))?
 }
 
 #[derive(Clone)]
@@ -196,50 +211,5 @@ impl RequestTelemetry for ModelsRequestTelemetry {
             },
             &self.auth_env,
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::num::NonZeroU64;
-
-    use super::*;
-    use agere_protocol::config_types::ModelProviderAuthInfo;
-
-    fn provider_info_with_command_auth() -> ModelProviderInfo {
-        ModelProviderInfo {
-            auth: Some(ModelProviderAuthInfo {
-                command: "print-token".to_string(),
-                args: Vec::new(),
-                timeout_ms: NonZeroU64::new(5_000).expect("timeout should be non-zero"),
-                refresh_interval_ms: 300_000,
-                cwd: std::env::current_dir()
-                    .expect("current dir should be available")
-                    .try_into()
-                    .expect("current dir should be absolute"),
-            }),
-            requires_provider_auth: false,
-            ..ModelProviderInfo::create_openai_provider(/*base_url*/ None)
-        }
-    }
-
-    #[test]
-    fn command_auth_provider_reports_command_auth_without_cached_auth() {
-        let endpoint = OpenAiModelsEndpoint::new(
-            provider_info_with_command_auth(),
-            /*auth_manager*/ None,
-        );
-
-        assert!(endpoint.has_command_auth());
-    }
-
-    #[test]
-    fn provider_without_command_auth_reports_no_command_auth() {
-        let endpoint = OpenAiModelsEndpoint::new(
-            ModelProviderInfo::create_openai_provider(/*base_url*/ None),
-            /*auth_manager*/ None,
-        );
-
-        assert!(!endpoint.has_command_auth());
     }
 }

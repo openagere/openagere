@@ -1044,7 +1044,7 @@ async fn view_image_tool_returns_unsupported_message_for_text_only_model() -> an
         shell_type: ConfigShellToolType::ShellCommand,
         visibility: ModelVisibility::List,
         supported_in_api: true,
-        input_modalities: vec![InputModality::Text],
+        input_modalities: Some(vec![InputModality::Text]),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
         priority: 1,

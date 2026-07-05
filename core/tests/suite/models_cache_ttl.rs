@@ -357,7 +357,7 @@ fn test_remote_model(slug: &str, priority: i32) -> ModelInfo {
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: default_input_modalities(),
+        input_modalities: Some(default_input_modalities()),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     }

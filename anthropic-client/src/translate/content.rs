@@ -25,7 +25,7 @@ pub(crate) fn content_item_to_anthropic(
 
 /// Parse a `data:` URL into (media_type, base64_data).
 /// Falls back to treating the entire URL as the data if not a data: URL.
-fn parse_data_url(url: &str) -> (&str, &str) {
+pub(crate) fn parse_data_url(url: &str) -> (&str, &str) {
     if let Some(rest) = url.strip_prefix("data:")
         && let Some((media_type, data)) = rest.split_once(";base64,")
     {

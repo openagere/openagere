@@ -1929,16 +1929,13 @@ impl ModelClientSession {
         summary: ReasoningSummaryConfig,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
-        let _ = summary;
-        let client_setup = self.client.current_client_setup().await?;
-        let transport = ReqwestTransport::new(build_reqwest_client());
-
         let tool_projection = agere_tools::FlatWireToolProjection::new(&prompt.tools);
         let input_items = input_items_for_flat_wire_api(&prompt.input, &tool_projection);
 
         // Build Anthropic messages directly from ResponseItem[] — preserves tool_use/tool_result pairs
-        let require_thinking_sig =
-            requires_thinking_signature_downgrade(&client_setup.api_provider.base_url);
+        let provider = self.client.provider();
+        let provider_base_url = provider.info().base_url.as_deref().unwrap_or("");
+        let require_thinking_sig = requires_thinking_signature_downgrade(provider_base_url);
         let messages = build_anthropic_messages_from_response_items(
             &input_items,
             &MessageBuildContext::new().with_require_thinking_signature(require_thinking_sig),
@@ -1966,32 +1963,67 @@ impl ModelClientSession {
         options.output_schema = prompt.output_schema.clone();
         let model = &model_info.slug;
 
-        let inference_trace_attempt = inference_trace.start_attempt();
-        let client =
-            AnthropicClient::new(transport, client_setup.api_provider, client_setup.api_auth);
+        let auth_manager = provider.auth_manager();
+        let mut auth_recovery = auth_manager
+            .as_ref()
+            .map(AuthManager::unauthorized_recovery);
+        loop {
+            let client_setup = self.client.current_client_setup().await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let inference_trace_attempt = inference_trace.start_attempt();
+            let client =
+                AnthropicClient::new(transport, client_setup.api_provider, client_setup.api_auth);
 
-        let stream_result = client
-            .stream_request_with_messages(
-                model,
-                system,
-                messages,
-                &tools,
-                thinking_effort,
-                summary,
-                options,
-            )
-            .await;
+            let stream_result = client
+                .stream_request_with_messages(
+                    model,
+                    system,
+                    messages.clone(),
+                    &tools,
+                    thinking_effort,
+                    summary,
+                    options.clone(),
+                )
+                .await;
 
-        match stream_result {
-            Ok(stream) => {
-                let (stream, _) =
-                    map_response_stream(stream, session_telemetry.clone(), inference_trace_attempt);
-                Ok(stream)
-            }
-            Err(err) => {
-                let mapped = map_api_error(err);
-                inference_trace_attempt.record_failed(&mapped, None, &[]);
-                Err(mapped)
+            match stream_result {
+                Ok(stream) => {
+                    let (stream, _) = map_response_stream(
+                        stream,
+                        session_telemetry.clone(),
+                        inference_trace_attempt,
+                    );
+                    return Ok(stream);
+                }
+                Err(ApiError::Transport(
+                    unauthorized_transport @ TransportError::Http { status, .. },
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    let response_debug_context =
+                        extract_response_debug_context(&unauthorized_transport);
+                    inference_trace_attempt.record_failed(
+                        &unauthorized_transport,
+                        response_debug_context.request_id.as_deref(),
+                        /*output_items*/ &[],
+                    );
+                    handle_unauthorized(
+                        unauthorized_transport,
+                        &mut auth_recovery,
+                        session_telemetry,
+                    )
+                    .await?;
+                    continue;
+                }
+                Err(err) => {
+                    let response_debug_context =
+                        extract_response_debug_context_from_api_error(&err);
+                    let mapped = map_api_error(err);
+                    inference_trace_attempt.record_failed(
+                        &mapped,
+                        response_debug_context.request_id.as_deref(),
+                        &[],
+                    );
+                    return Err(mapped);
+                }
             }
         }
     }
@@ -2014,9 +2046,6 @@ impl ModelClientSession {
         summary: ReasoningSummaryConfig,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
-        let client_setup = self.client.current_client_setup().await?;
-        let transport = ReqwestTransport::new(build_reqwest_client());
-
         let tool_projection = agere_tools::FlatWireToolProjection::new(&prompt.tools);
         let tools: Vec<agere_openai_chat_client::ToolDefinition> =
             chat_tool_definitions_from_projection(&tool_projection);
@@ -2043,32 +2072,70 @@ impl ModelClientSession {
         options.output_schema_strict = prompt.output_schema_strict;
         let model = &model_info.slug;
 
-        let inference_trace_attempt = inference_trace.start_attempt();
-        let client =
-            ChatCompletionsClient::new(transport, client_setup.api_provider, client_setup.api_auth);
+        let auth_manager = self.client.provider().auth_manager();
+        let mut auth_recovery = auth_manager
+            .as_ref()
+            .map(AuthManager::unauthorized_recovery);
+        loop {
+            let client_setup = self.client.current_client_setup().await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let inference_trace_attempt = inference_trace.start_attempt();
+            let client = ChatCompletionsClient::new(
+                transport,
+                client_setup.api_provider,
+                client_setup.api_auth,
+            );
 
-        let stream_result = client
-            .stream_request(
-                model,
-                system,
-                &input_items,
-                &tools,
-                reasoning_effort,
-                summary,
-                options,
-            )
-            .await;
+            let stream_result = client
+                .stream_request(
+                    model,
+                    system,
+                    &input_items,
+                    &tools,
+                    reasoning_effort,
+                    summary,
+                    options.clone(),
+                )
+                .await;
 
-        match stream_result {
-            Ok(stream) => {
-                let (stream, _) =
-                    map_response_stream(stream, session_telemetry.clone(), inference_trace_attempt);
-                Ok(stream)
-            }
-            Err(err) => {
-                let mapped = map_api_error(err);
-                inference_trace_attempt.record_failed(&mapped, None, &[]);
-                Err(mapped)
+            match stream_result {
+                Ok(stream) => {
+                    let (stream, _) = map_response_stream(
+                        stream,
+                        session_telemetry.clone(),
+                        inference_trace_attempt,
+                    );
+                    return Ok(stream);
+                }
+                Err(ApiError::Transport(
+                    unauthorized_transport @ TransportError::Http { status, .. },
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    let response_debug_context =
+                        extract_response_debug_context(&unauthorized_transport);
+                    inference_trace_attempt.record_failed(
+                        &unauthorized_transport,
+                        response_debug_context.request_id.as_deref(),
+                        /*output_items*/ &[],
+                    );
+                    handle_unauthorized(
+                        unauthorized_transport,
+                        &mut auth_recovery,
+                        session_telemetry,
+                    )
+                    .await?;
+                    continue;
+                }
+                Err(err) => {
+                    let response_debug_context =
+                        extract_response_debug_context_from_api_error(&err);
+                    let mapped = map_api_error(err);
+                    inference_trace_attempt.record_failed(
+                        &mapped,
+                        response_debug_context.request_id.as_deref(),
+                        &[],
+                    );
+                    return Err(mapped);
+                }
             }
         }
     }
@@ -2509,6 +2576,7 @@ async fn handle_unauthorized(
     session_telemetry: &SessionTelemetry,
 ) -> Result<UnauthorizedRecoveryExecution> {
     let debug = extract_response_debug_context(&transport);
+
     if let Some(recovery) = auth_recovery
         && recovery.has_next()
     {

@@ -20,13 +20,18 @@ agere-login = { workspace = true }
 agere-otel = { workspace = true }
 agere-protocol = { workspace = true }
 agere-utils-common = { workspace = true }
+agere-utils-fs = { workspace = true }
+agere-model-provider-info = { workspace = true }
+http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["fs", "sync", "time"] }
 tracing = { workspace = true, features = ["log"] }
+reqwest = { workspace = true }
 
 [dev-dependencies]
 agere-config = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+wiremock = { workspace = true }

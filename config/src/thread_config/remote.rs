@@ -1,12 +1,9 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::num::NonZeroU64;
 use std::time::Duration;
 
 use agere_model_provider_info::ModelProviderInfo;
 use agere_model_provider_info::WireApi;
-use agere_protocol::config_types::ModelProviderAuthInfo;
-use agere_utils_fs::AbsolutePathBuf;
 use async_trait::async_trait;
 
 use super::SessionThreadConfig;
@@ -163,15 +160,17 @@ fn model_provider_from_proto(
             )));
         }
     };
+    if provider.auth.is_some() {
+        return Err(parse_error(
+            "remote thread config returned unsupported provider auth",
+        ));
+    }
     let info = ModelProviderInfo {
         base_url: provider.base_url,
         env_key: provider.env_key,
         env_key_instructions: provider.env_key_instructions,
         experimental_bearer_token: provider.experimental_bearer_token,
-        auth: provider
-            .auth
-            .map(model_provider_auth_from_proto)
-            .transpose()?,
+        auth: None,
         aws: None,
         wire_api,
         query_params: provider.query_params.map(|map| map.values),
@@ -197,7 +196,7 @@ fn model_provider_to_proto(
         env_key,
         env_key_instructions,
         experimental_bearer_token,
-        auth,
+        auth: _,
         aws: _,
         wire_api,
         query_params,
@@ -219,7 +218,7 @@ fn model_provider_to_proto(
         env_key,
         env_key_instructions,
         experimental_bearer_token,
-        auth: auth.map(model_provider_auth_to_proto),
+        auth: None,
         wire_api: proto_wire_api(wire_api).into(),
         query_params: query_params.map(proto_string_map),
         http_headers: http_headers.map(proto_string_map),
@@ -230,46 +229,6 @@ fn model_provider_to_proto(
         websocket_connect_timeout_ms,
         requires_provider_auth,
         supports_websockets,
-    }
-}
-
-fn model_provider_auth_from_proto(
-    auth: proto::ModelProviderAuthInfo,
-) -> Result<ModelProviderAuthInfo, ThreadConfigLoadError> {
-    let timeout_ms = NonZeroU64::new(auth.timeout_ms)
-        .ok_or_else(|| parse_error("remote thread config returned zero auth timeout_ms"))?;
-    let cwd = AbsolutePathBuf::from_absolute_path_checked(&auth.cwd).map_err(|err| {
-        parse_error(format!(
-            "remote thread config returned invalid auth cwd {:?}: {err}",
-            auth.cwd
-        ))
-    })?;
-
-    Ok(ModelProviderAuthInfo {
-        command: auth.command,
-        args: auth.args,
-        timeout_ms,
-        refresh_interval_ms: auth.refresh_interval_ms,
-        cwd,
-    })
-}
-
-#[cfg(test)]
-fn model_provider_auth_to_proto(auth: ModelProviderAuthInfo) -> proto::ModelProviderAuthInfo {
-    let ModelProviderAuthInfo {
-        command,
-        args,
-        timeout_ms,
-        refresh_interval_ms,
-        cwd,
-    } = auth;
-
-    proto::ModelProviderAuthInfo {
-        command,
-        args,
-        timeout_ms: timeout_ms.get(),
-        refresh_interval_ms,
-        cwd: cwd.to_string_lossy().into_owned(),
     }
 }
 
@@ -300,11 +259,9 @@ fn parse_error(message: impl Into<String>) -> ThreadConfigLoadError {
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::HashMap;
-    use std::num::NonZeroU64;
 
     use agere_model_provider_info::ModelProviderInfo;
     use agere_model_provider_info::WireApi;
-    use agere_protocol::config_types::ModelProviderAuthInfo;
     use agere_utils_fs::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use tonic::Request;
@@ -405,7 +362,6 @@ mod tests {
     }
 
     fn proto_sources() -> Vec<proto::ThreadConfigSource> {
-        let workspace_cwd = workspace_dir().to_string_lossy().into_owned();
         vec![
             proto::ThreadConfigSource {
                 source: Some(proto::thread_config_source::Source::Session(
@@ -418,13 +374,7 @@ mod tests {
                             env_key: None,
                             env_key_instructions: None,
                             experimental_bearer_token: None,
-                            auth: Some(proto::ModelProviderAuthInfo {
-                                command: "token-helper".to_string(),
-                                args: vec!["--json".to_string()],
-                                timeout_ms: 5_000,
-                                refresh_interval_ms: 300_000,
-                                cwd: workspace_cwd,
-                            }),
+                            auth: None,
                             wire_api: proto::WireApi::Responses.into(),
                             query_params: Some(proto::StringMap {
                                 values: HashMap::from([(
@@ -486,13 +436,7 @@ mod tests {
             env_key: None,
             env_key_instructions: None,
             experimental_bearer_token: None,
-            auth: Some(ModelProviderAuthInfo {
-                command: "token-helper".to_string(),
-                args: vec!["--json".to_string()],
-                timeout_ms: NonZeroU64::new(5_000).expect("non-zero timeout"),
-                refresh_interval_ms: 300_000,
-                cwd: workspace_dir(),
-            }),
+            auth: None,
             wire_api: WireApi::Responses,
             query_params: Some(HashMap::from([(
                 "api-version".to_string(),

@@ -1,4 +1,5 @@
 pub(crate) mod cache;
+pub(crate) mod catalog_overlay;
 pub mod collaboration_mode_presets;
 pub(crate) mod config;
 pub mod manager;
@@ -6,6 +7,8 @@ pub mod model_info;
 pub mod model_presets;
 pub mod swappable;
 pub mod test_support;
+pub(crate) mod wire_api_catalog;
+pub(crate) mod wire_api_catalog_client;
 
 pub use agere_app_server_protocol::AuthMode;
 pub use config::ModelsManagerConfig;

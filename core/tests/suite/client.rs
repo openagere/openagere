@@ -19,7 +19,6 @@ use agere_otel::TelemetryAuthMode;
 use agere_protocol::ThreadId;
 use agere_protocol::config_types::CollaborationMode;
 use agere_protocol::config_types::ModeKind;
-use agere_protocol::config_types::ModelProviderAuthInfo;
 use agere_protocol::config_types::ReasoningSummary;
 use agere_protocol::config_types::Settings;
 use agere_protocol::config_types::Verbosity;
@@ -70,7 +69,6 @@ use futures::StreamExt;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::io::Write;
-use std::num::NonZeroU64;
 use std::sync::Arc;
 use tempfile::TempDir;
 use toml::toml;
@@ -159,101 +157,6 @@ fn write_auth_json(
     .unwrap();
 
     fake_jwt
-}
-
-struct ProviderAuthCommandFixture {
-    tempdir: TempDir,
-    command: String,
-    args: Vec<String>,
-}
-
-impl ProviderAuthCommandFixture {
-    fn new(tokens: &[&str]) -> std::io::Result<Self> {
-        let tempdir = tempfile::tempdir()?;
-        let tokens_file = tempdir.path().join("tokens.txt");
-        let mut token_file_contents = String::new();
-        for token in tokens {
-            token_file_contents.push_str(token);
-            token_file_contents.push('\n');
-        }
-        std::fs::write(&tokens_file, token_file_contents)?;
-
-        #[cfg(unix)]
-        let (command, args) = {
-            let script_path = tempdir.path().join("print-token.sh");
-            std::fs::write(
-                &script_path,
-                r#"#!/bin/sh
-first_line=$(sed -n '1p' tokens.txt)
-printf '%s\n' "$first_line"
-tail -n +2 tokens.txt > tokens.next
-mv tokens.next tokens.txt
-"#,
-            )?;
-            let mut permissions = std::fs::metadata(&script_path)?.permissions();
-            {
-                use std::os::unix::fs::PermissionsExt;
-                permissions.set_mode(0o755);
-            }
-            std::fs::set_permissions(&script_path, permissions)?;
-            ("./print-token.sh".to_string(), Vec::new())
-        };
-
-        #[cfg(windows)]
-        let (command, args) = {
-            let script_path = tempdir.path().join("print-token.cmd");
-            std::fs::write(
-                &script_path,
-                r#"@echo off
-setlocal EnableExtensions DisableDelayedExpansion
-
-set "first_line="
-<tokens.txt set /p first_line=
-if not defined first_line exit /b 1
-
-echo(%first_line%
-more +1 tokens.txt > tokens.next
-move /y tokens.next tokens.txt >nul
-"#,
-            )?;
-            (
-                "cmd.exe".to_string(),
-                vec![
-                    "/D".to_string(),
-                    "/Q".to_string(),
-                    "/C".to_string(),
-                    ".\\print-token.cmd".to_string(),
-                ],
-            )
-        };
-
-        Ok(Self {
-            tempdir,
-            command,
-            args,
-        })
-    }
-
-    fn auth(&self) -> ModelProviderAuthInfo {
-        ModelProviderAuthInfo {
-            command: self.command.clone(),
-            args: self.args.clone(),
-            // Match the model-provider default to avoid brittle shell-startup timing in CI.
-            timeout_ms: non_zero_u64(/*value*/ 5_000),
-            refresh_interval_ms: 60_000,
-            cwd: match agere_utils_fs::AbsolutePathBuf::try_from(self.tempdir.path()) {
-                Ok(cwd) => cwd,
-                Err(err) => panic!("tempdir should be absolute: {err}"),
-            },
-        }
-    }
-}
-
-fn non_zero_u64(value: u64) -> NonZeroU64 {
-    match NonZeroU64::new(value) {
-        Some(value) => value,
-        None => panic!("expected non-zero value: {value}"),
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -779,149 +682,6 @@ async fn includes_conversation_id_and_model_headers_in_request() {
         request_body["client_metadata"]["x-agere-installation-id"].as_str(),
         Some(installation_id.as_str())
     );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn provider_auth_command_supplies_bearer_token() {
-    skip_if_no_network!();
-
-    let server = MockServer::start().await;
-    mount_sse_once_match(
-        &server,
-        header("authorization", "Bearer command-token"),
-        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
-    )
-    .await;
-    let auth_fixture = ProviderAuthCommandFixture::new(&["command-token"]).unwrap();
-
-    send_provider_auth_request(&server, auth_fixture.auth()).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn provider_auth_command_refreshes_after_401() {
-    skip_if_no_network!();
-
-    let server = MockServer::start().await;
-    let auth_fixture = ProviderAuthCommandFixture::new(&["first-token", "second-token"]).unwrap();
-
-    Mock::given(method("POST"))
-        .and(path("/v1/responses"))
-        .and(header_regex("Authorization", "Bearer first-token"))
-        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/v1/responses"))
-        .and(header_regex("Authorization", "Bearer second-token"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "text/event-stream")
-                .set_body_raw(
-                    sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
-                    "text/event-stream",
-                ),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    send_provider_auth_request(&server, auth_fixture.auth()).await;
-}
-
-/// Issues one streamed Responses request through a provider configured with command-backed auth.
-///
-/// The caller owns the server-side assertions, so this helper only validates that the request
-/// reaches `Completed` without surfacing an auth or transport error to the client.
-#[expect(clippy::expect_used, clippy::unwrap_used)]
-async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuthInfo) {
-    let provider = ModelProviderInfo {
-        base_url: Some(format!("{}/v1", server.uri())),
-        env_key: None,
-        env_key_instructions: None,
-        experimental_bearer_token: None,
-        auth: Some(auth),
-        aws: None,
-        wire_api: WireApi::Responses,
-        query_params: None,
-        http_headers: None,
-        env_http_headers: None,
-        request_max_retries: Some(0),
-        stream_max_retries: Some(0),
-        stream_idle_timeout_ms: Some(5_000),
-        websocket_connect_timeout_ms: None,
-        requires_provider_auth: false,
-        supports_websockets: false,
-    };
-
-    let agere_home = TempDir::new().unwrap();
-    let mut config = load_default_config_for_test(&agere_home).await;
-    config.model_provider_id = format!("{}", provider.wire_api);
-    config.model_provider = provider.clone();
-    let effort = config.model_reasoning_effort;
-    let summary = config.model_reasoning_summary;
-    let model = agere_core::test_support::get_model_offline(config.model.as_deref());
-    config.model = Some(model.clone());
-    let config = Arc::new(config);
-    let model_info =
-        agere_core::test_support::construct_model_info_offline(model.as_str(), &config);
-    let conversation_id = ThreadId::new();
-    let session_telemetry = SessionTelemetry::new(
-        conversation_id,
-        model.as_str(),
-        model_info.slug.as_str(),
-        /*account_id*/ None,
-        Some("test@test.com".to_string()),
-        /*auth_mode*/ None,
-        "test_originator".to_string(),
-        /*log_user_prompts*/ false,
-        "test".to_string(),
-        SessionSource::Exec,
-    );
-    let client = ModelClient::new(
-        Some(AuthManager::from_auth_for_testing(AgereAuth::from_api_key(
-            "unused-api-key",
-        ))),
-        conversation_id,
-        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
-        provider,
-        SessionSource::Exec,
-        config.model_verbosity,
-        /*enable_request_compression*/ false,
-        /*include_timing_metrics*/ false,
-        /*beta_features_header*/ None,
-    );
-    let mut client_session = client.new_session();
-    let mut prompt = Prompt::default();
-    prompt.input.push(ResponseItem::Message {
-        id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText {
-            text: "hello".to_string(),
-        }],
-        phase: None,
-    });
-
-    let mut stream = client_session
-        .stream(
-            &prompt,
-            &model_info,
-            &session_telemetry,
-            effort,
-            summary.unwrap_or(ReasoningSummary::Auto),
-            /*service_tier*/ None,
-            /*turn_metadata_header*/ None,
-            /*provider_changed_for_turn*/ false,
-            &agere_rollout_trace::InferenceTraceContext::disabled(),
-        )
-        .await
-        .expect("responses stream to start");
-
-    while let Some(event) = stream.next().await {
-        if let Ok(ResponseEvent::Completed { .. }) = event {
-            break;
-        }
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -753,27 +753,23 @@ impl App {
             model = updated_model;
         }
 
-        // For custom providers, use config.toml's models instead of app-server's model list.
-        let available_models = if !agere_model_provider_info::BUILT_IN_PROVIDERS
+        let mut model_catalog = if !agere_model_provider_info::BUILT_IN_PROVIDERS
             .contains(&config.model_provider_id.as_str())
         {
-            crate::model_preset_builder::build_model_presets(
-                config.model_provider.wire_api,
-                &config.models,
-                &model,
-            )
+            Self::model_catalog_from_provider_config(&config).await
         } else {
-            available_models
+            Arc::new(ModelCatalog::new(
+                available_models,
+                CollaborationModesConfig {
+                    default_mode_request_user_input: config
+                        .features
+                        .enabled(Feature::DefaultModeRequestUserInput),
+                },
+            ))
         };
-
-        let mut model_catalog = Arc::new(ModelCatalog::new(
-            available_models.clone(),
-            CollaborationModesConfig {
-                default_mode_request_user_input: config
-                    .features
-                    .enabled(Feature::DefaultModeRequestUserInput),
-            },
-        ));
+        let available_models = model_catalog
+            .try_list_models()
+            .expect("TUI model catalog listing is infallible");
         let feedback_audience = bootstrap.feedback_audience;
         let auth_mode = bootstrap.auth_mode;
         let has_chatgpt_account = bootstrap.has_chatgpt_account;

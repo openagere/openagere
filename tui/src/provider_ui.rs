@@ -355,6 +355,7 @@ pub(crate) fn parse_models(input: &str) -> Result<Vec<ModelConfig>, String> {
             models.push(ModelConfig {
                 name: name.to_string(),
                 context_window: Some(context_window),
+                input_modalities: None,
             });
         } else {
             if part.contains(']') {
@@ -363,6 +364,7 @@ pub(crate) fn parse_models(input: &str) -> Result<Vec<ModelConfig>, String> {
             models.push(ModelConfig {
                 name: part.to_string(),
                 context_window: None,
+                input_modalities: None,
             });
         }
     }
@@ -592,14 +594,17 @@ mod tests {
                 ModelConfig {
                     name: "gpt-4o".to_string(),
                     context_window: Some(200_000),
+                    input_modalities: None,
                 },
                 ModelConfig {
                     name: "claude".to_string(),
                     context_window: None,
+                    input_modalities: None,
                 },
                 ModelConfig {
                     name: "deepseek".to_string(),
                     context_window: Some(2_000_000),
+                    input_modalities: None,
                 },
             ]
         );

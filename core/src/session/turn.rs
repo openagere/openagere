@@ -438,7 +438,7 @@ pub(crate) async fn run_turn(
         let sampling_request_input: Vec<ResponseItem> = {
             sess.clone_history()
                 .await
-                .for_prompt(&turn_context.model_info.input_modalities)
+                .for_prompt(&turn_context.model_info.effective_input_modalities())
         };
 
         let sampling_request_input_messages = sampling_request_input
@@ -1081,7 +1081,7 @@ async fn run_sampling_request(
         } else {
             sess.clone_history()
                 .await
-                .for_prompt(&turn_context.model_info.input_modalities)
+                .for_prompt(&turn_context.model_info.effective_input_modalities())
         };
         if tool_search_loaded_tools {
             router = built_tools(
