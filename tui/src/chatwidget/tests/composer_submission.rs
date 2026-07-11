@@ -944,6 +944,75 @@ async fn empty_enter_during_task_does_not_queue() {
 }
 
 #[tokio::test]
+async fn output_free_interrupted_turn_requests_prompt_restore() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let prompt = UserMessage::from("revise this prompt");
+    chat.record_cancel_edit_candidate(prompt.clone());
+    chat.on_task_started();
+
+    chat.submit_op(crate::app_command::AppCommand::interrupt_and_restore_prompt_if_no_output());
+    assert_matches!(op_rx.try_recv(), Ok(Op::Interrupt));
+    chat.on_interrupted_turn(TurnAbortReason::Interrupted);
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RestoreCancelledTurn(restored)) if restored == prompt
+    );
+}
+
+#[tokio::test]
+async fn visible_output_prevents_cancelled_turn_prompt_restore() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.record_cancel_edit_candidate(UserMessage::from("revise this prompt"));
+    chat.on_task_started();
+    chat.on_agent_message_delta("visible output".to_string());
+    chat.submit_op(crate::app_command::AppCommand::interrupt_and_restore_prompt_if_no_output());
+
+    chat.on_interrupted_turn(TurnAbortReason::Interrupted);
+
+    while let Ok(event) = rx.try_recv() {
+        assert!(!matches!(event, AppEvent::RestoreCancelledTurn(_)));
+    }
+}
+
+#[tokio::test]
+async fn thinking_status_keeps_cancelled_turn_prompt_restore_eligible() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let prompt = UserMessage::from("revise this prompt");
+    chat.record_cancel_edit_candidate(prompt.clone());
+    chat.on_task_started();
+    chat.on_agent_reasoning_delta("**Thinking**".to_string());
+    chat.submit_op(crate::app_command::AppCommand::interrupt_and_restore_prompt_if_no_output());
+
+    chat.on_interrupted_turn(TurnAbortReason::Interrupted);
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RestoreCancelledTurn(restored)) if restored == prompt
+    );
+}
+
+#[tokio::test]
+async fn patch_activity_prevents_cancelled_turn_prompt_restore() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.record_cancel_edit_candidate(UserMessage::from("revise this prompt"));
+    chat.on_task_started();
+    chat.on_patch_apply_begin(PatchApplyBeginEvent {
+        call_id: "call-1".to_string(),
+        turn_id: "turn-1".to_string(),
+        auto_approved: true,
+        changes: HashMap::new(),
+    });
+    chat.submit_op(crate::app_command::AppCommand::interrupt_and_restore_prompt_if_no_output());
+
+    chat.on_interrupted_turn(TurnAbortReason::Interrupted);
+
+    while let Ok(event) = rx.try_recv() {
+        assert!(!matches!(event, AppEvent::RestoreCancelledTurn(_)));
+    }
+}
+
+#[tokio::test]
 async fn restore_thread_input_state_syncs_sleep_inhibitor_state() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.set_feature_enabled(Feature::PreventIdleSleep, /*enabled*/ true);

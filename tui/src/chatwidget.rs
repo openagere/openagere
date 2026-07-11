@@ -916,6 +916,8 @@ pub(crate) struct ChatWidget {
     mcp_startup_pending_next_round: HashMap<String, McpStartupStatus>,
     /// Tracks whether the buffered next round has seen any `Starting` update yet.
     mcp_startup_pending_next_round_saw_starting: bool,
+    /// Candidate prompt that may be restored when an output-free turn is interrupted.
+    cancel_edit: CancelEditState,
     connectors_cache: ConnectorsCacheState,
     connectors_partial_snapshot: Option<ConnectorsSnapshot>,
     connectors_prefetch_in_flight: bool,
@@ -1140,16 +1142,16 @@ pub(crate) struct ActiveCellTranscriptKey {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UserMessage {
-    text: String,
-    local_images: Vec<LocalImageAttachment>,
+    pub(crate) text: String,
+    pub(crate) local_images: Vec<LocalImageAttachment>,
     /// Remote image attachments represented as URLs (for example data URLs)
     /// provided by app-server clients.
     ///
     /// Unlike `local_images`, these are not created by TUI image attach/paste
     /// flows. The TUI can restore and remove them while editing/backtracking.
-    remote_image_urls: Vec<String>,
-    text_elements: Vec<TextElement>,
-    mention_bindings: Vec<MentionBinding>,
+    pub(crate) remote_image_urls: Vec<String>,
+    pub(crate) text_elements: Vec<TextElement>,
+    pub(crate) mention_bindings: Vec<MentionBinding>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1286,6 +1288,13 @@ struct PendingSteer {
     user_message: UserMessage,
     history_record: UserMessageHistoryRecord,
     compare_key: PendingSteerCompareKey,
+}
+
+#[derive(Debug, Default)]
+struct CancelEditState {
+    prompt: Option<UserMessage>,
+    eligible: bool,
+    armed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2379,12 +2388,15 @@ impl ChatWidget {
         self.visible_user_turn_count = 0;
         self.copy_history_evicted_by_rollback = false;
         self.saw_copy_source_this_turn = false;
-        self.bottom_pane
-            .set_history_metadata(event.history_log_id, event.history_entry_count);
         self.set_skills(/*skills*/ None);
         self.session_network_proxy = event.network_proxy.clone();
         let previous_thread_id = self.thread_id;
         self.thread_id = Some(event.session_id);
+        self.bottom_pane.set_history_metadata(
+            event.session_id,
+            event.history_log_id,
+            event.history_entry_count,
+        );
         if previous_thread_id != self.thread_id {
             self.recent_auto_review_denials = RecentAutoReviewDenials::default();
         }
@@ -2667,6 +2679,9 @@ impl ChatWidget {
     fn on_plan_delta(&mut self, delta: String) {
         if self.active_mode_kind() != ModeKind::Plan {
             return;
+        }
+        if !delta.is_empty() {
+            self.record_visible_turn_activity();
         }
         if !self.plan_item_active {
             self.plan_item_active = true;
@@ -3382,6 +3397,7 @@ impl ChatWidget {
         self.stream_controller = None;
         self.plan_stream_controller = None;
         self.pending_status_indicator_restore = false;
+        self.clear_cancel_edit();
         self.request_status_line_branch_refresh();
         self.maybe_show_pending_rate_limit_prompt();
     }
@@ -3786,11 +3802,13 @@ impl ChatWidget {
     /// When there are queued user messages, restore them into the composer
     /// separated by newlines rather than auto‑submitting the next one.
     fn on_interrupted_turn(&mut self, reason: TurnAbortReason) {
+        let cancelled_prompt = self.take_armed_cancel_edit_prompt(&reason);
         // Finalize, log a gentle prompt, and clear running state.
         self.finalize_turn();
         let send_pending_steers_immediately = self.submit_pending_steers_after_interrupt;
         self.submit_pending_steers_after_interrupt = false;
-        if reason != TurnAbortReason::ReviewEnded
+        if cancelled_prompt.is_none()
+            && reason != TurnAbortReason::ReviewEnded
             && self.interrupted_turn_notice_mode != InterruptedTurnNoticeMode::Suppress
         {
             if send_pending_steers_immediately {
@@ -3824,8 +3842,47 @@ impl ChatWidget {
             self.restore_user_message_to_composer(combined);
         }
         self.refresh_pending_input_preview();
+        if let Some(prompt) = cancelled_prompt {
+            self.app_event_tx
+                .send(AppEvent::RestoreCancelledTurn(prompt));
+        }
 
         self.request_redraw();
+    }
+
+    fn record_cancel_edit_candidate(&mut self, prompt: UserMessage) {
+        self.cancel_edit.prompt = Some(prompt);
+        self.cancel_edit.eligible = true;
+        self.cancel_edit.armed = false;
+    }
+
+    fn record_visible_turn_activity(&mut self) {
+        self.cancel_edit.eligible = false;
+        self.cancel_edit.armed = false;
+    }
+
+    fn arm_cancel_edit(&mut self) {
+        self.cancel_edit.armed = self.cancel_edit.eligible
+            && self.cancel_edit.prompt.is_some()
+            && self.bottom_pane.composer_is_empty()
+            && self.pending_steers.is_empty()
+            && !self.has_queued_follow_up_messages()
+            && !self.active_side_conversation;
+    }
+
+    fn take_armed_cancel_edit_prompt(&mut self, reason: &TurnAbortReason) -> Option<UserMessage> {
+        if matches!(reason, TurnAbortReason::Interrupted)
+            && self.cancel_edit.armed
+            && self.cancel_edit.eligible
+        {
+            self.cancel_edit.prompt.take()
+        } else {
+            None
+        }
+    }
+
+    fn clear_cancel_edit(&mut self) {
+        self.cancel_edit = CancelEditState::default();
     }
 
     /// Merge pending steers, queued drafts, and the current composer state into a single message.
@@ -4315,6 +4372,7 @@ impl ChatWidget {
     }
 
     fn on_exec_command_begin(&mut self, ev: ExecCommandBeginEvent) {
+        self.record_visible_turn_activity();
         self.flush_answer_stream_with_separator();
         if is_unified_exec_source(ev.source) {
             self.track_unified_exec_process_begin(&ev);
@@ -4406,6 +4464,7 @@ impl ChatWidget {
     }
 
     fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
+        self.record_visible_turn_activity();
         self.add_to_history(history_cell::new_patch_event(
             event.changes,
             &self.config.cwd,
@@ -5202,6 +5261,9 @@ impl ChatWidget {
 
     #[inline]
     fn handle_streaming_delta(&mut self, delta: String) {
+        if !delta.is_empty() {
+            self.record_visible_turn_activity();
+        }
         // Before streaming agent content, flush any active exec cell group.
         self.flush_unified_exec_wait_streak();
         self.flush_active_cell();
@@ -5739,6 +5801,7 @@ impl ChatWidget {
             mcp_startup_allow_terminal_only_next_round: false,
             mcp_startup_pending_next_round: HashMap::new(),
             mcp_startup_pending_next_round_saw_starting: false,
+            cancel_edit: CancelEditState::default(),
             connectors_cache: ConnectorsCacheState::default(),
             connectors_partial_snapshot: None,
             connectors_prefetch_in_flight: false,
@@ -5877,7 +5940,13 @@ impl ChatWidget {
                 } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'c')
             )
         {
+            let should_pause_active_goal = self
+                .bottom_pane
+                .active_view_will_interrupt_turn_on_key_event(key_event);
             self.bottom_pane.handle_key_event(key_event);
+            if should_pause_active_goal {
+                self.pause_active_goal_for_interrupt();
+            }
             if self.bottom_pane.no_modal_or_popup_active() {
                 self.maybe_send_next_queued_input();
             }
@@ -5978,7 +6047,9 @@ impl ChatWidget {
             && self.bottom_pane.no_modal_or_popup_active()
         {
             self.submit_pending_steers_after_interrupt = true;
-            if !self.submit_op(AppCommand::interrupt()) {
+            if self.submit_op(AppCommand::interrupt_and_restore_prompt_if_no_output()) {
+                self.pause_active_goal_for_interrupt();
+            } else {
                 self.submit_pending_steers_after_interrupt = false;
             }
             return;
@@ -6006,7 +6077,13 @@ impl ChatWidget {
             }
             _ => {
                 let had_modal_or_popup = !self.bottom_pane.no_modal_or_popup_active();
-                match self.bottom_pane.handle_key_event(key_event) {
+                let should_pause_active_goal =
+                    self.bottom_pane.should_interrupt_running_task(key_event);
+                let input_result = self.bottom_pane.handle_key_event(key_event);
+                if should_pause_active_goal {
+                    self.pause_active_goal_for_interrupt();
+                }
+                match input_result {
                     InputResult::Submitted {
                         text,
                         text_elements,
@@ -6713,6 +6790,13 @@ impl ChatWidget {
             )
         });
         if let Some(display_user_message) = display_user_message {
+            self.record_cancel_edit_candidate(UserMessage {
+                text: display_user_message.text.clone(),
+                local_images: display_user_message.local_images.clone(),
+                remote_image_urls: display_user_message.remote_image_urls.clone(),
+                text_elements: display_user_message.text_elements.clone(),
+                mention_bindings: display_user_message.mention_bindings.clone(),
+            });
             let UserMessage {
                 text,
                 local_images,
@@ -8736,22 +8820,19 @@ impl ChatWidget {
         let default_effort: ReasoningEffortConfig = preset.default_reasoning_effort;
 
         let switch_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-            tx.send(AppEvent::AgereOp(
-                AppCommand::override_turn_context(
-                    /*cwd*/ None,
-                    /*approval_policy*/ None,
-                    /*approvals_reviewer*/ None,
-                    /*permission_profile*/ None,
-                    /*windows_execution_restriction_level*/ None,
-                    Some(switch_model_for_events.clone()),
-                    Some(Some(default_effort)),
-                    /*summary*/ None,
-                    /*service_tier*/ None,
-                    /*collaboration_mode*/ None,
-                    /*personality*/ None,
-                )
-                .into_core(),
-            ));
+            tx.send(AppEvent::AgereOp(AppCommand::override_turn_context(
+                /*cwd*/ None,
+                /*approval_policy*/ None,
+                /*approvals_reviewer*/ None,
+                /*permission_profile*/ None,
+                /*windows_execution_restriction_level*/ None,
+                Some(switch_model_for_events.clone()),
+                Some(Some(default_effort)),
+                /*summary*/ None,
+                /*service_tier*/ None,
+                /*collaboration_mode*/ None,
+                /*personality*/ None,
+            )));
             tx.send(AppEvent::UpdateModel(switch_model_for_events.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(Some(default_effort)));
         })];
@@ -8991,22 +9072,19 @@ impl ChatWidget {
                 let name = Self::personality_label(personality).to_string();
                 let description = Some(Self::personality_description(personality).to_string());
                 let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::AgereOp(
-                        AppCommand::override_turn_context(
-                            /*cwd*/ None,
-                            /*approval_policy*/ None,
-                            /*approvals_reviewer*/ None,
-                            /*permission_profile*/ None,
-                            /*windows_execution_restriction_level*/ None,
-                            /*model*/ None,
-                            /*effort*/ None,
-                            /*summary*/ None,
-                            /*service_tier*/ None,
-                            /*collaboration_mode*/ None,
-                            Some(personality),
-                        )
-                        .into_core(),
-                    ));
+                    tx.send(AppEvent::AgereOp(AppCommand::override_turn_context(
+                        /*cwd*/ None,
+                        /*approval_policy*/ None,
+                        /*approvals_reviewer*/ None,
+                        /*permission_profile*/ None,
+                        /*windows_execution_restriction_level*/ None,
+                        /*model*/ None,
+                        /*effort*/ None,
+                        /*summary*/ None,
+                        /*service_tier*/ None,
+                        /*collaboration_mode*/ None,
+                        Some(personality),
+                    )));
                     tx.send(AppEvent::UpdatePersonality(personality));
                     tx.send(AppEvent::PersistPersonalitySelection { personality });
                 })];
@@ -10005,7 +10083,7 @@ impl ChatWidget {
 
         self.app_event_tx.send(AppEvent::SubmitThreadOp {
             thread_id,
-            op: Op::ApproveGuardianDeniedAction { event },
+            op: Op::ApproveGuardianDeniedAction { event }.into(),
         });
         self.add_info_message(
             "Approval recorded for one retry of the selected auto-review denial.".to_string(),
@@ -10043,22 +10121,19 @@ impl ChatWidget {
     ) -> Vec<SelectionAction> {
         vec![Box::new(move |tx| {
             let permission_profile_clone = permission_profile.clone();
-            tx.send(AppEvent::AgereOp(
-                AppCommand::override_turn_context(
-                    /*cwd*/ None,
-                    Some(approval),
-                    Some(approvals_reviewer),
-                    Some(permission_profile_clone.clone()),
-                    /*windows_execution_restriction_level*/ None,
-                    /*model*/ None,
-                    /*effort*/ None,
-                    /*summary*/ None,
-                    /*service_tier*/ None,
-                    /*collaboration_mode*/ None,
-                    /*personality*/ None,
-                )
-                .into_core(),
-            ));
+            tx.send(AppEvent::AgereOp(AppCommand::override_turn_context(
+                /*cwd*/ None,
+                Some(approval),
+                Some(approvals_reviewer),
+                Some(permission_profile_clone.clone()),
+                /*windows_execution_restriction_level*/ None,
+                /*model*/ None,
+                /*effort*/ None,
+                /*summary*/ None,
+                /*service_tier*/ None,
+                /*collaboration_mode*/ None,
+                /*personality*/ None,
+            )));
             tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
             tx.send(AppEvent::UpdatePermissionProfile(permission_profile_clone));
             tx.send(AppEvent::UpdateApprovalsReviewer(approvals_reviewer));
@@ -10877,8 +10952,8 @@ impl ChatWidget {
             self.config.notices.fast_default_opt_out = Some(true);
         }
         self.set_service_tier(service_tier);
-        self.app_event_tx.send(AppEvent::AgereOp(
-            AppCommand::override_turn_context(
+        self.app_event_tx
+            .send(AppEvent::AgereOp(AppCommand::override_turn_context(
                 /*cwd*/ None,
                 /*approval_policy*/ None,
                 /*approvals_reviewer*/ None,
@@ -10890,9 +10965,7 @@ impl ChatWidget {
                 Some(service_tier),
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
-            )
-            .into_core(),
-        ));
+            )));
         self.app_event_tx
             .send(AppEvent::PersistServiceTierSelection { service_tier });
     }
@@ -11691,6 +11764,12 @@ impl ChatWidget {
             return;
         }
         let modal_or_popup_active = !self.bottom_pane.no_modal_or_popup_active();
+        let should_pause_active_goal = self
+            .bottom_pane
+            .active_view_will_interrupt_turn_on_key_event(KeyEvent::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+            ));
         if self.bottom_pane.on_ctrl_c() == CancellationEvent::Handled {
             if DOUBLE_PRESS_QUIT_SHORTCUT_ENABLED {
                 if modal_or_popup_active {
@@ -11701,6 +11780,9 @@ impl ChatWidget {
                     self.arm_quit_shortcut(key);
                 }
             }
+            if should_pause_active_goal {
+                self.pause_active_goal_for_interrupt();
+            }
             return;
         }
 
@@ -11709,7 +11791,9 @@ impl ChatWidget {
                 self.quit_shortcut_expires_at = None;
                 self.quit_shortcut_key = None;
                 self.bottom_pane.clear_quit_shortcut_hint();
-                self.submit_op(AppCommand::interrupt());
+                if self.submit_op(AppCommand::interrupt_and_restore_prompt_if_no_output()) {
+                    self.pause_active_goal_for_interrupt();
+                }
             } else {
                 self.request_quit_without_confirmation();
             }
@@ -11725,9 +11809,34 @@ impl ChatWidget {
 
         self.arm_quit_shortcut(key);
 
-        if self.is_cancellable_work_active() {
-            self.submit_op(AppCommand::interrupt());
+        if self.is_cancellable_work_active()
+            && self.submit_op(AppCommand::interrupt_and_restore_prompt_if_no_output())
+        {
+            self.pause_active_goal_for_interrupt();
         }
+    }
+
+    /// When the user intentionally interrupts an active agent turn, pause any
+    /// active goal so the dashboard reflects that progress was halted by the
+    /// user rather than stalled.
+    fn pause_active_goal_for_interrupt(&self) {
+        if !self.agent_turn_running {
+            return;
+        }
+        if !self
+            .current_goal_status
+            .as_ref()
+            .is_some_and(GoalStatusState::is_active)
+        {
+            return;
+        }
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+        self.app_event_tx.send(AppEvent::SetThreadGoalStatus {
+            thread_id,
+            status: AppThreadGoalStatus::Paused,
+        });
     }
 
     /// Handles a Ctrl+D press at the chat-widget layer.
@@ -11973,7 +12082,7 @@ impl ChatWidget {
                 }
             }
             AgereOpTarget::AppEvent => {
-                self.app_event_tx.send(AppEvent::AgereOp(op.into()));
+                self.app_event_tx.send(AppEvent::AgereOp(op));
             }
         }
         true
@@ -11983,6 +12092,11 @@ impl ChatWidget {
         if matches!(op.view(), crate::app_command::AppCommandView::Interrupt)
             && self.agent_turn_running
         {
+            if op.interrupt_behavior()
+                == crate::app_command::InterruptBehavior::RestorePromptIfNoOutput
+            {
+                self.arm_cancel_edit();
+            }
             if let Some(controller) = self.stream_controller.as_mut() {
                 controller.clear_queue();
             }

@@ -524,8 +524,8 @@ impl App {
                         }
                         None => WindowsExecutionRestrictionLevel::Disabled,
                     };
-                self.app_event_tx.send(AppEvent::AgereOp(
-                    AppCommand::override_turn_context(
+                self.app_event_tx
+                    .send(AppEvent::AgereOp(AppCommand::override_turn_context(
                         /*cwd*/ None,
                         /*approval_policy*/ None,
                         /*approvals_reviewer*/ None,
@@ -538,9 +538,7 @@ impl App {
                         /*service_tier*/ None,
                         /*collaboration_mode*/ None,
                         /*personality*/ None,
-                    )
-                    .into_core(),
-                ));
+                    )));
             }
         }
 

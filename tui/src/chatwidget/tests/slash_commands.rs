@@ -51,7 +51,7 @@ async fn slash_compact_eagerly_queues_follow_up_before_turn_start() {
 
     assert!(chat.bottom_pane.is_task_running());
     match rx.try_recv() {
-        Ok(AppEvent::AgereOp(Op::Compact)) => {}
+        Ok(AppEvent::AgereOp(cmd)) if cmd.as_core() == &Op::Compact => {}
         other => panic!("expected compact op to be submitted, got {other:?}"),
     }
 
@@ -103,7 +103,7 @@ async fn queued_slash_compact_dispatches_after_active_turn() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, AppEvent::AgereOp(Op::Compact))),
+            .any(|event| matches!(event, AppEvent::AgereOp(cmd) if cmd.as_core() == &Op::Compact)),
         "expected queued /compact to submit compact op; events: {events:?}"
     );
 }
@@ -446,7 +446,10 @@ async fn queued_bare_rename_drains_next_input_after_name_update() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::AgereOp(Op::SetThreadName { name }) if name == "Queued rename"
+            AppEvent::AgereOp(cmd) if matches!(
+                cmd.as_core(),
+                Op::SetThreadName { name } if name == "Queued rename"
+            )
         )),
         "expected rename prompt to submit thread name; events: {events:?}"
     );
@@ -500,7 +503,10 @@ async fn queued_inline_rename_does_not_drain_again_before_turn_started() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::AgereOp(Op::SetThreadName { name }) if name == "Queued rename"
+            AppEvent::AgereOp(cmd) if matches!(
+                cmd.as_core(),
+                Op::SetThreadName { name } if name == "Queued rename"
+            )
         )),
         "expected queued /rename to submit thread name; events: {events:?}"
     );
@@ -1196,10 +1202,13 @@ async fn slash_rename_prefills_existing_thread_name() {
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    assert_matches!(
-        rx.try_recv(),
-        Ok(AppEvent::AgereOp(Op::SetThreadName { name })) if name == "Current project title"
-    );
+    match rx.try_recv() {
+        Ok(AppEvent::AgereOp(cmd)) => match cmd.into_core() {
+            Op::SetThreadName { name } if name == "Current project title" => {}
+            other => panic!("expected SetThreadName, got {other:?}"),
+        },
+        other => panic!("expected AgereOp SetThreadName, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -2118,10 +2127,13 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::AgereOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(ServiceTier::Fast)),
-                ..
-            })
+            AppEvent::AgereOp(cmd) if matches!(
+                cmd.as_core(),
+                Op::OverrideTurnContext {
+                    service_tier: Some(Some(ServiceTier::Fast)),
+                    ..
+                }
+            )
         )),
         "expected fast-mode override app event; events: {events:?}"
     );
@@ -2190,10 +2202,13 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::AgereOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(ServiceTier::Fast)),
-                ..
-            })
+            AppEvent::AgereOp(cmd) if matches!(
+                cmd.as_core(),
+                Op::OverrideTurnContext {
+                    service_tier: Some(Some(ServiceTier::Fast)),
+                    ..
+                }
+            )
         )),
         "expected queued /fast to update service tier before next turn; events: {events:?}"
     );
@@ -2236,10 +2251,13 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::AgereOp(Op::OverrideTurnContext {
-                service_tier: Some(None),
-                ..
-            })
+            AppEvent::AgereOp(cmd) if matches!(
+                cmd.as_core(),
+                Op::OverrideTurnContext {
+                    service_tier: Some(None),
+                    ..
+                }
+            )
         )),
         "expected fast-mode off override app event; events: {events:?}"
     );

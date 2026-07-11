@@ -48,15 +48,22 @@ async fn approving_recent_denial_emits_structured_core_op_once() {
 
     chat.approve_recent_auto_review_denial(thread_id, "auto-review-recent-1".to_string());
 
-    assert_matches!(
-        rx.try_recv(),
+    match rx.try_recv() {
         Ok(AppEvent::SubmitThreadOp {
             thread_id: submitted_thread_id,
-            op: Op::ApproveGuardianDeniedAction { event }
-        }) if submitted_thread_id == thread_id
-                && event.id == "auto-review-recent-1"
-                && event.status == GuardianAssessmentStatus::Denied
-    );
+            op,
+        }) => {
+            assert_eq!(submitted_thread_id, thread_id);
+            match op.into_core() {
+                Op::ApproveGuardianDeniedAction { event } => {
+                    assert_eq!(event.id, "auto-review-recent-1");
+                    assert_eq!(event.status, GuardianAssessmentStatus::Denied);
+                }
+                other => panic!("expected ApproveGuardianDeniedAction, got {other:?}"),
+            }
+        }
+        other => panic!("expected SubmitThreadOp, got {other:?}"),
+    }
     assert_matches!(rx.try_recv(), Ok(AppEvent::InsertHistoryCell(_)));
 
     chat.approve_recent_auto_review_denial(thread_id, "auto-review-recent-1".to_string());

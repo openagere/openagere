@@ -113,10 +113,8 @@ async fn exec_approval_uses_approval_id_when_present() {
 
     let mut found = false;
     while let Ok(app_ev) = rx.try_recv() {
-        if let AppEvent::SubmitThreadOp {
-            op: Op::ExecApproval { id, decision, .. },
-            ..
-        } = app_ev
+        if let AppEvent::SubmitThreadOp { op, .. } = app_ev
+            && let Op::ExecApproval { id, decision, .. } = op.into_core()
         {
             assert_eq!(id, "approval-subcommand");
             assert_matches!(decision, agere_protocol::protocol::ReviewDecision::Approved);
@@ -1711,10 +1709,8 @@ async fn apply_patch_approval_sends_op_with_call_id() {
     // Expect a thread-scoped PatchApproval op carrying the call id.
     let mut found = false;
     while let Ok(app_ev) = rx.try_recv() {
-        if let AppEvent::SubmitThreadOp {
-            op: Op::PatchApproval { id, decision },
-            ..
-        } = app_ev
+        if let AppEvent::SubmitThreadOp { op, .. } = app_ev
+            && let Op::PatchApproval { id, decision } = op.into_core()
         {
             assert_eq!(id, "call-999");
             assert_matches!(decision, agere_protocol::protocol::ReviewDecision::Approved);
@@ -1748,7 +1744,7 @@ async fn apply_patch_full_flow_integration_like() {
 
     // 2) User approves via 'y' and App receives a thread-scoped op
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    let mut maybe_op: Option<Op> = None;
+    let mut maybe_op = None;
     while let Ok(app_ev) = rx.try_recv() {
         if let AppEvent::SubmitThreadOp { op, .. } = app_ev {
             maybe_op = Some(op);

@@ -25,8 +25,22 @@ use serde_json::Value;
 
 use crate::permission_compat::legacy_compatible_permission_profile;
 
+/// Local interrupt policy that is not part of the core `Op` wire format.
+///
+/// Core still receives plain `Op::Interrupt`; the TUI uses this flag to decide whether an
+/// output-free cancelled turn should restore the submitted prompt into the composer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub(crate) enum InterruptBehavior {
+    #[default]
+    Default,
+    RestorePromptIfNoOutput,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct AppCommand(Op);
+pub(crate) struct AppCommand {
+    op: Op,
+    interrupt_behavior: InterruptBehavior,
+}
 
 #[allow(clippy::large_enum_variant)]
 #[allow(dead_code)]
@@ -111,29 +125,54 @@ pub(crate) enum AppCommandView<'a> {
 }
 
 impl AppCommand {
+    fn from_op(op: Op) -> Self {
+        Self {
+            op,
+            interrupt_behavior: InterruptBehavior::Default,
+        }
+    }
+
     pub(crate) fn interrupt() -> Self {
-        Self(Op::Interrupt)
+        Self {
+            op: Op::Interrupt,
+            interrupt_behavior: InterruptBehavior::Default,
+        }
+    }
+
+    pub(crate) fn interrupt_and_restore_prompt_if_no_output() -> Self {
+        Self {
+            op: Op::Interrupt,
+            interrupt_behavior: InterruptBehavior::RestorePromptIfNoOutput,
+        }
+    }
+
+    pub(crate) fn interrupt_behavior(&self) -> InterruptBehavior {
+        if matches!(self.op, Op::Interrupt) {
+            self.interrupt_behavior
+        } else {
+            InterruptBehavior::Default
+        }
     }
 
     pub(crate) fn clean_background_terminals() -> Self {
-        Self(Op::CleanBackgroundTerminals)
+        Self::from_op(Op::CleanBackgroundTerminals)
     }
 
     pub(crate) fn realtime_conversation_start(params: ConversationStartParams) -> Self {
-        Self(Op::RealtimeConversationStart(params))
+        Self::from_op(Op::RealtimeConversationStart(params))
     }
 
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub(crate) fn realtime_conversation_audio(params: ConversationAudioParams) -> Self {
-        Self(Op::RealtimeConversationAudio(params))
+        Self::from_op(Op::RealtimeConversationAudio(params))
     }
 
     pub(crate) fn realtime_conversation_close() -> Self {
-        Self(Op::RealtimeConversationClose)
+        Self::from_op(Op::RealtimeConversationClose)
     }
 
     pub(crate) fn run_user_shell_command(command: String) -> Self {
-        Self(Op::RunUserShellCommand { command })
+        Self::from_op(Op::RunUserShellCommand { command })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -157,7 +196,7 @@ impl AppCommand {
             .unwrap_or_else(|err| {
                 unreachable!("legacy-compatible permissions must project to legacy policy: {err}")
             });
-        Self(Op::UserTurn {
+        Self::from_op(Op::UserTurn {
             items,
             environments: None,
             cwd,
@@ -188,7 +227,7 @@ impl AppCommand {
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
     ) -> Self {
-        Self(Op::OverrideTurnContext {
+        Self::from_op(Op::OverrideTurnContext {
             cwd,
             approval_policy,
             approvals_reviewer,
@@ -208,7 +247,7 @@ impl AppCommand {
         turn_id: Option<String>,
         decision: ReviewDecision,
     ) -> Self {
-        Self(Op::ExecApproval {
+        Self::from_op(Op::ExecApproval {
             id,
             turn_id,
             decision,
@@ -216,7 +255,7 @@ impl AppCommand {
     }
 
     pub(crate) fn patch_approval(id: String, decision: ReviewDecision) -> Self {
-        Self(Op::PatchApproval { id, decision })
+        Self::from_op(Op::PatchApproval { id, decision })
     }
 
     pub(crate) fn resolve_elicitation(
@@ -226,7 +265,7 @@ impl AppCommand {
         content: Option<Value>,
         meta: Option<Value>,
     ) -> Self {
-        Self(Op::ResolveElicitation {
+        Self::from_op(Op::ResolveElicitation {
             server_name,
             request_id,
             decision,
@@ -236,42 +275,46 @@ impl AppCommand {
     }
 
     pub(crate) fn user_input_answer(id: String, response: RequestUserInputResponse) -> Self {
-        Self(Op::UserInputAnswer { id, response })
+        Self::from_op(Op::UserInputAnswer { id, response })
     }
 
     pub(crate) fn request_permissions_response(
         id: String,
         response: RequestPermissionsResponse,
     ) -> Self {
-        Self(Op::RequestPermissionsResponse { id, response })
+        Self::from_op(Op::RequestPermissionsResponse { id, response })
     }
 
     pub(crate) fn reload_user_config() -> Self {
-        Self(Op::ReloadUserConfig)
+        Self::from_op(Op::ReloadUserConfig)
     }
 
     pub(crate) fn list_skills(cwds: Vec<PathBuf>, force_reload: bool) -> Self {
-        Self(Op::ListSkills { cwds, force_reload })
+        Self::from_op(Op::ListSkills { cwds, force_reload })
     }
 
     pub(crate) fn compact() -> Self {
-        Self(Op::Compact)
+        Self::from_op(Op::Compact)
     }
 
     pub(crate) fn set_thread_name(name: String) -> Self {
-        Self(Op::SetThreadName { name })
+        Self::from_op(Op::SetThreadName { name })
     }
 
     pub(crate) fn thread_rollback(num_turns: u32) -> Self {
-        Self(Op::ThreadRollback { num_turns })
+        Self::from_op(Op::ThreadRollback { num_turns })
     }
 
     pub(crate) fn review(review_request: ReviewRequest) -> Self {
-        Self(Op::Review { review_request })
+        Self::from_op(Op::Review { review_request })
     }
 
     pub(crate) fn into_core(self) -> Op {
-        self.0
+        self.op
+    }
+
+    pub(crate) fn as_core(&self) -> &Op {
+        &self.op
     }
 
     pub(crate) fn is_review(&self) -> bool {
@@ -279,7 +322,7 @@ impl AppCommand {
     }
 
     pub(crate) fn view(&self) -> AppCommandView<'_> {
-        match &self.0 {
+        match &self.op {
             Op::Interrupt => AppCommandView::Interrupt,
             Op::CleanBackgroundTerminals => AppCommandView::CleanBackgroundTerminals,
             Op::RealtimeConversationStart(params) => {
@@ -397,13 +440,13 @@ impl AppCommand {
 
 impl From<Op> for AppCommand {
     fn from(value: Op) -> Self {
-        Self(value)
+        Self::from_op(value)
     }
 }
 
 impl From<&Op> for AppCommand {
     fn from(value: &Op) -> Self {
-        Self(value.clone())
+        Self::from_op(value.clone())
     }
 }
 
@@ -415,6 +458,18 @@ impl From<&AppCommand> for AppCommand {
 
 impl From<AppCommand> for Op {
     fn from(value: AppCommand) -> Self {
-        value.0
+        value.op
+    }
+}
+
+impl PartialEq<Op> for AppCommand {
+    fn eq(&self, other: &Op) -> bool {
+        &self.op == other
+    }
+}
+
+impl PartialEq<AppCommand> for Op {
+    fn eq(&self, other: &AppCommand) -> bool {
+        self == &other.op
     }
 }

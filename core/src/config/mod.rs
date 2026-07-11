@@ -472,6 +472,9 @@ pub struct Config {
     /// 3. built-in defaults
     pub tui_keymap: TuiKeymap,
 
+    /// Preferred layout for the resume/fork session picker.
+    pub tui_session_picker_view: SessionPickerViewMode,
+
     /// The absolute directory that should be treated as the current working
     /// directory for the session. All relative paths inside the business-logic
     /// layer are resolved against this path.
@@ -2751,10 +2754,15 @@ impl Config {
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             terminal_resize_reflow,
             tui_keymap: cfg
-                .tui
-                .as_ref()
-                .map(|t| t.keymap.clone())
-                .unwrap_or_default(),
+               .tui
+               .as_ref()
+               .map(|t| t.keymap.clone())
+               .unwrap_or_default(),
+           tui_session_picker_view: cfg
+               .tui
+               .as_ref()
+               .and_then(|t| t.session_picker_view)
+               .unwrap_or_default(),
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -2928,3 +2936,4 @@ mod tests;
 #[cfg(test)]
 #[path = "config_loader_tests.rs"]
 mod config_loader_tests;
+use agere_config::types::SessionPickerViewMode;

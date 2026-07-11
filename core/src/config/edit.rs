@@ -3,6 +3,7 @@ use crate::path_utils::write_atomically;
 use agere_config::CONFIG_TOML_FILE;
 use agere_config::config_toml::ModelConfig;
 use agere_config::types::McpServerConfig;
+use agere_config::types::SessionPickerViewMode;
 use agere_config::types::ToolSuggestDisabledTool;
 use agere_features::FEATURES;
 use agere_protocol::config_types::Personality;
@@ -92,6 +93,14 @@ pub fn syntax_theme_edit(name: &str) -> ConfigEdit {
     ConfigEdit::SetPath {
         segments: vec!["tui".to_string(), "theme".to_string()],
         value: value(name.to_string()),
+    }
+}
+
+/// Produces a config edit that sets `[tui].session_picker_view = "<mode>"`.
+pub fn session_picker_view_edit(mode: SessionPickerViewMode) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "session_picker_view".to_string()],
+        value: value(mode.to_string()),
     }
 }
 
@@ -1327,6 +1336,11 @@ impl ConfigEditsBuilder {
             }),
             None => self.edits.push(ConfigEdit::ClearPath { segments }),
         }
+        self
+    }
+
+    pub fn set_session_picker_view(mut self, mode: SessionPickerViewMode) -> Self {
+        self.edits.push(session_picker_view_edit(mode));
         self
     }
 

@@ -495,6 +495,20 @@ impl App {
         Ok(())
     }
 
+    /// Persist prompt text in the local cross-session message history.
+    pub(super) fn append_message_history_entry(&self, thread_id: ThreadId, text: String) {
+        let config = self.chat_widget.config_ref().clone();
+        tokio::spawn(async move {
+            if let Err(err) = append_message_history_entry(&text, &thread_id, &config).await {
+                tracing::warn!(
+                    thread_id = %thread_id,
+                    error = %err,
+                    "failed to append to message history"
+                );
+            }
+        });
+    }
+
     /// Spawn a background task that fetches MCP server status from the app-server
     /// via paginated RPCs, then delivers the result back through
     /// `AppEvent::McpInventoryLoaded`.
@@ -511,18 +525,7 @@ impl App {
     ) -> Result<bool> {
         match op.view() {
             AppCommandView::Other(Op::AddToHistory { text }) => {
-                let text = text.clone();
-                let config = self.chat_widget.config_ref().clone();
-                tokio::spawn(async move {
-                    if let Err(err) = append_message_history_entry(&text, &thread_id, &config).await
-                    {
-                        tracing::warn!(
-                            thread_id = %thread_id,
-                            error = %err,
-                            "failed to append to message history"
-                        );
-                    }
-                });
+                self.append_message_history_entry(thread_id, text.clone());
                 Ok(true)
             }
             AppCommandView::Other(Op::GetHistoryEntryRequest { offset, log_id }) => {

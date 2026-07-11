@@ -598,10 +598,9 @@ impl ChatComposerHistory {
                         boundary_if_exhausted,
                     });
                 }
-                app_event_tx.send(AppEvent::AgereOp(Op::GetHistoryEntryRequest {
-                    offset,
-                    log_id,
-                }));
+                app_event_tx.send(AppEvent::AgereOp(
+                    Op::GetHistoryEntryRequest { offset, log_id }.into(),
+                ));
                 return HistorySearchResult::Pending;
             }
 
@@ -719,10 +718,13 @@ impl ChatComposerHistory {
             self.last_history_text = Some(entry.text.clone());
             return Some(entry);
         } else if let Some(log_id) = self.history_log_id {
-            app_event_tx.send(AppEvent::AgereOp(Op::GetHistoryEntryRequest {
-                offset: global_idx,
-                log_id,
-            }));
+            app_event_tx.send(AppEvent::AgereOp(
+                Op::GetHistoryEntryRequest {
+                    offset: global_idx,
+                    log_id,
+                }
+                .into(),
+            ));
         }
         None
     }
@@ -852,7 +854,7 @@ mod tests {
                 log_id: 1,
                 offset: 2,
             },
-            op
+            op.into_core()
         );
 
         // Inject the async response.
@@ -879,7 +881,7 @@ mod tests {
                 log_id: 1,
                 offset: 1,
             },
-            op
+            op.into_core()
         );
 
         assert_eq!(
@@ -1115,7 +1117,7 @@ mod tests {
                 log_id: 1,
                 offset: 2,
             },
-            op
+            op.into_core()
         );
 
         assert_eq!(
@@ -1135,7 +1137,7 @@ mod tests {
                 log_id: 1,
                 offset: 1,
             },
-            op
+            op.into_core()
         );
 
         assert_eq!(

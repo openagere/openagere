@@ -1261,20 +1261,23 @@ async fn custom_prompt_submit_sends_review_op() {
     chat.handle_paste("  please audit dependencies  ".to_string());
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    // Expect AppEvent::AgereOp(Op::Review { .. }) with trimmed prompt
+    // Expect AppEvent::AgereOp(Review) with trimmed prompt
     let evt = rx.try_recv().expect("expected one app event");
     match evt {
-        AppEvent::AgereOp(Op::Review { review_request }) => {
-            assert_eq!(
-                review_request,
-                ReviewRequest {
-                    target: ReviewTarget::Custom {
-                        instructions: "please audit dependencies".to_string(),
-                    },
-                    user_facing_hint: None,
-                }
-            );
-        }
+        AppEvent::AgereOp(cmd) => match cmd.into_core() {
+            Op::Review { review_request } => {
+                assert_eq!(
+                    review_request,
+                    ReviewRequest {
+                        target: ReviewTarget::Custom {
+                            instructions: "please audit dependencies".to_string(),
+                        },
+                        user_facing_hint: None,
+                    }
+                );
+            }
+            other => panic!("unexpected op: {other:?}"),
+        },
         other => panic!("unexpected app event: {other:?}"),
     }
 }

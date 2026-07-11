@@ -118,4 +118,6 @@ developer message OpenAgere inserts when realtime becomes active. It only affect
 the realtime start message in prompt history and does not change websocket
 backend prompt settings or the realtime end/inactive message.
 
-Ctrl+C/Ctrl+D quitting uses a ~1 second double-press hint (`ctrl + c again to quit`).
+Ctrl+C/Ctrl+D quitting is single-press when idle (double-press quit is currently disabled).
+While a turn is running, Ctrl+C interrupts the active turn and restores the cancelled
+prompt when the model produced no output.

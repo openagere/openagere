@@ -1165,10 +1165,8 @@ mod tests {
         assert!(view.is_complete());
         let mut decision = None;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ExecApproval { decision: d, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ExecApproval { decision: d, .. } = op.into_core()
             {
                 decision = Some(d);
                 break;
@@ -1196,10 +1194,8 @@ mod tests {
         assert!(view.is_complete());
         let mut decision = None;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ResolveElicitation { decision: d, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ResolveElicitation { decision: d, .. } = op.into_core()
             {
                 decision = Some(d);
                 break;
@@ -1249,10 +1245,8 @@ mod tests {
 
         let mut saw_denied = false;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ExecApproval { decision, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ExecApproval { decision, .. } = op.into_core()
             {
                 assert_eq!(decision, ReviewDecision::Denied);
                 saw_denied = true;
@@ -1297,10 +1291,8 @@ mod tests {
 
         let mut saw_deny = false;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ExecApproval { decision, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ExecApproval { decision, .. } = op.into_core()
             {
                 assert_eq!(
                     decision,
@@ -1460,10 +1452,8 @@ mod tests {
         view.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
         let mut saw_op = false;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ExecApproval { decision, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ExecApproval { decision, .. } = op.into_core()
             {
                 assert_eq!(
                     decision,
@@ -1705,10 +1695,8 @@ mod tests {
 
         let mut saw_op = false;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::RequestPermissionsResponse { response, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::RequestPermissionsResponse { response, .. } = op.into_core()
             {
                 assert_eq!(response.scope, PermissionGrantScope::Session);
                 saw_op = true;
@@ -1740,10 +1728,8 @@ mod tests {
 
         let mut saw_op = false;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::RequestPermissionsResponse { response, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::RequestPermissionsResponse { response, .. } = op.into_core()
             {
                 assert!(response.permissions.is_empty());
                 assert_eq!(response.scope, PermissionGrantScope::Turn);
@@ -1768,10 +1754,8 @@ mod tests {
 
         let mut saw_op = false;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::RequestPermissionsResponse { response, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::RequestPermissionsResponse { response, .. } = op.into_core()
             {
                 assert_eq!(response.scope, PermissionGrantScope::Turn);
                 assert!(response.strict_auto_review);
@@ -2031,10 +2015,8 @@ mod tests {
 
         let mut decision = None;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ResolveElicitation { decision: d, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ResolveElicitation { decision: d, .. } = op.into_core()
             {
                 decision = Some(d);
                 break;
@@ -2065,10 +2047,8 @@ mod tests {
         view.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         let mut esc_decision = None;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ResolveElicitation { decision, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ResolveElicitation { decision, .. } = op.into_core()
             {
                 esc_decision = Some(decision);
                 break;
@@ -2095,10 +2075,8 @@ mod tests {
         view.handle_key_event(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
         let mut n_decision = None;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ResolveElicitation { decision, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ResolveElicitation { decision, .. } = op.into_core()
             {
                 n_decision = Some(decision);
                 break;
@@ -2121,10 +2099,8 @@ mod tests {
 
         let mut decision = None;
         while let Ok(ev) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ExecApproval { decision: d, .. },
-                ..
-            } = ev
+            if let AppEvent::SubmitThreadOp { op, .. } = ev
+                && let Op::ExecApproval { decision: d, .. } = op.into_core()
             {
                 decision = Some(d);
                 break;

@@ -17,6 +17,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use crate::app::app_server_requests::ResolvedAppServerRequest;
+use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::pending_input_preview::PendingInputPreview;
@@ -37,6 +38,7 @@ use agere_core_skills::model::SkillMetadata;
 use agere_features::Features;
 use agere_file_search::FileMatch;
 use agere_plugin::PluginCapabilitySummary;
+use agere_protocol::ThreadId;
 use agere_protocol::request_user_input::RequestUserInputEvent;
 use agere_protocol::user_input::TextElement;
 pub(crate) use bottom_pane_view::BottomPaneView;
@@ -209,6 +211,8 @@ pub(crate) struct BottomPane {
 
     app_event_tx: AppEventSender,
     frame_requester: FrameRequester,
+    /// Active thread id, used when persisting Ctrl+C-cleared drafts to history.
+    thread_id: Option<ThreadId>,
 
     has_input_focus: bool,
     enhanced_keys_supported: bool,
@@ -274,6 +278,7 @@ impl BottomPane {
             last_composer_activity_at: None,
             app_event_tx,
             frame_requester,
+            thread_id: None,
             has_input_focus,
             enhanced_keys_supported,
             disable_paste_burst,
@@ -587,20 +592,10 @@ impl BottomPane {
             self.request_redraw();
             InputResult::None
         } else {
-            let is_agent_command = self
-                .composer_text()
-                .lines()
-                .next()
-                .and_then(parse_slash_name)
-                .is_some_and(|(name, _, _)| name == "agent");
-
             // If a task is running and a status line is visible, allow the
             // configured interrupt binding even while the composer has focus.
             // When a popup is active, prefer dismissing it over interrupting the task.
-            if self.keymap.chat.interrupt_turn.is_pressed(key_event)
-                && self.is_task_running
-                && !(is_agent_command && key_event.code == KeyCode::Esc)
-                && !self.composer.popup_active()
+            if self.should_interrupt_running_task(key_event)
                 && let Some(status) = &self.status
             {
                 // Send Op::Interrupt
@@ -757,7 +752,16 @@ impl BottomPane {
     }
 
     pub(crate) fn clear_composer_for_ctrl_c(&mut self) {
-        self.composer.clear_for_ctrl_c();
+        if let Some(text) = self.composer.clear_for_ctrl_c() {
+            if let Some(thread_id) = self.thread_id {
+                self.app_event_tx
+                    .send(AppEvent::AppendMessageHistoryEntry { thread_id, text });
+            } else {
+                tracing::warn!(
+                    "failed to append Ctrl+C-cleared draft to history: no active thread id"
+                );
+            }
+        }
         self.request_redraw();
     }
 
@@ -1149,6 +1153,21 @@ impl BottomPane {
         self.is_task_running
     }
 
+    pub(crate) fn should_interrupt_running_task(&self, key_event: KeyEvent) -> bool {
+        let is_agent_command = self
+            .composer_text()
+            .lines()
+            .next()
+            .and_then(parse_slash_name)
+            .is_some_and(|(name, _, _)| name == "agent");
+
+        self.keymap.chat.interrupt_turn.is_pressed(key_event)
+            && self.is_task_running
+            && !(is_agent_command && key_event.code == KeyCode::Esc)
+            && self.no_modal_or_popup_active()
+            && self.status.is_some()
+    }
+
     pub(crate) fn terminal_title_requires_action(&self) -> bool {
         self.active_view()
             .is_some_and(bottom_pane_view::BottomPaneView::terminal_title_requires_action)
@@ -1156,6 +1175,13 @@ impl BottomPane {
 
     pub(crate) fn has_active_view(&self) -> bool {
         !self.view_stack.is_empty()
+    }
+
+    pub(crate) fn active_view_will_interrupt_turn_on_key_event(&self, key_event: KeyEvent) -> bool {
+        self.is_task_running
+            && self
+                .active_view()
+                .is_some_and(|view| view.will_interrupt_turn_on_key_event(key_event))
     }
 
     /// Push remote provider templates into the active provider wizard view.
@@ -1419,7 +1445,13 @@ impl BottomPane {
 
     // --- History helpers ---
 
-    pub(crate) fn set_history_metadata(&mut self, log_id: u64, entry_count: usize) {
+    pub(crate) fn set_history_metadata(
+        &mut self,
+        thread_id: ThreadId,
+        log_id: u64,
+        entry_count: usize,
+    ) {
+        self.thread_id = Some(thread_id);
         self.composer.set_history_metadata(log_id, entry_count);
     }
 
@@ -1942,10 +1974,8 @@ mod tests {
 
         let mut approval_decision = None;
         while let Ok(event) = rx.try_recv() {
-            if let AppEvent::SubmitThreadOp {
-                op: Op::ExecApproval { decision, .. },
-                ..
-            } = event
+            if let AppEvent::SubmitThreadOp { op, .. } = event
+                && let Op::ExecApproval { decision, .. } = op.into_core()
             {
                 approval_decision = Some(decision);
             }
@@ -2424,7 +2454,10 @@ mod tests {
 
         while let Ok(ev) = rx.try_recv() {
             assert!(
-                !matches!(ev, AppEvent::AgereOp(Op::Interrupt)),
+                !matches!(
+                    ev,
+                    AppEvent::AgereOp(ref cmd) if matches!(cmd.view(), crate::app_command::AppCommandView::Interrupt)
+                ),
                 "expected Esc to not send Op::Interrupt when dismissing skill popup"
             );
         }
@@ -2462,7 +2495,10 @@ mod tests {
 
         while let Ok(ev) = rx.try_recv() {
             assert!(
-                !matches!(ev, AppEvent::AgereOp(Op::Interrupt)),
+                !matches!(
+                    ev,
+                    AppEvent::AgereOp(ref cmd) if matches!(cmd.view(), crate::app_command::AppCommandView::Interrupt)
+                ),
                 "expected Esc to not send Op::Interrupt while command popup is active"
             );
         }
@@ -2498,7 +2534,10 @@ mod tests {
 
         while let Ok(ev) = rx.try_recv() {
             assert!(
-                !matches!(ev, AppEvent::AgereOp(Op::Interrupt)),
+                !matches!(
+                    ev,
+                    AppEvent::AgereOp(ref cmd) if matches!(cmd.view(), crate::app_command::AppCommandView::Interrupt)
+                ),
                 "expected Esc to not send Op::Interrupt while typing `/agent`"
             );
         }
@@ -2543,7 +2582,10 @@ mod tests {
 
         while let Ok(ev) = rx.try_recv() {
             assert!(
-                !matches!(ev, AppEvent::AgereOp(Op::Interrupt)),
+                !matches!(
+                    ev,
+                    AppEvent::AgereOp(ref cmd) if matches!(cmd.view(), crate::app_command::AppCommandView::Interrupt)
+                ),
                 "expected Esc release after dismissing agent picker to not interrupt"
             );
         }
@@ -2573,7 +2615,11 @@ mod tests {
         pane.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
 
         assert!(
-            matches!(rx.try_recv(), Ok(AppEvent::AgereOp(Op::Interrupt))),
+            matches!(
+                rx.try_recv(),
+                Ok(AppEvent::AgereOp(ref cmd))
+                    if matches!(cmd.view(), crate::app_command::AppCommandView::Interrupt)
+            ),
             "expected Esc to send Op::Interrupt while a task is running"
         );
     }

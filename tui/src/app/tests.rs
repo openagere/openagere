@@ -770,13 +770,17 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
             }
             AppEvent::SubmitThreadOp {
                 thread_id: op_thread_id,
-                op: Op::UserTurn { items, .. },
+                op,
             } => {
                 assert_eq!(op_thread_id, thread_id);
-                submitted_items = Some(items);
+                if let Op::UserTurn { items, .. } = op.into_core() {
+                    submitted_items = Some(items);
+                }
             }
-            AppEvent::AgereOp(Op::UserTurn { items, .. }) => {
-                submitted_items = Some(items);
+            AppEvent::AgereOp(cmd) => {
+                if let Op::UserTurn { items, .. } = cmd.into_core() {
+                    submitted_items = Some(items);
+                }
             }
             _ => {}
         }

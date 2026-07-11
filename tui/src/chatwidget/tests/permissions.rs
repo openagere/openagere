@@ -297,22 +297,28 @@ async fn approvals_popup_navigation_skips_disabled() {
     assert!(
         app_events.iter().any(|ev| matches!(
             ev,
-            AppEvent::AgereOp(Op::OverrideTurnContext {
-                approval_policy: Some(AskForApproval::OnRequest),
-                personality: None,
-                ..
-            })
+            AppEvent::AgereOp(cmd) if matches!(
+                cmd.as_core(),
+                Op::OverrideTurnContext {
+                    approval_policy: Some(AskForApproval::OnRequest),
+                    personality: None,
+                    ..
+                }
+            )
         )),
         "enter should select an enabled preset"
     );
     assert!(
         !app_events.iter().any(|ev| matches!(
             ev,
-            AppEvent::AgereOp(Op::OverrideTurnContext {
-                approval_policy: Some(AskForApproval::Never),
-                personality: None,
-                ..
-            })
+            AppEvent::AgereOp(cmd) if matches!(
+                cmd.as_core(),
+                Op::OverrideTurnContext {
+                    approval_policy: Some(AskForApproval::Never),
+                    personality: None,
+                    ..
+                }
+            )
         )),
         "disabled preset should not be selected"
     );
@@ -679,7 +685,9 @@ async fn permissions_selection_sends_approvals_reviewer_in_override_turn_context
 
     let op = std::iter::from_fn(|| rx.try_recv().ok())
         .find_map(|event| match event {
-            AppEvent::AgereOp(op @ Op::OverrideTurnContext { .. }) => Some(op),
+            AppEvent::AgereOp(cmd) if matches!(cmd.as_core(), Op::OverrideTurnContext { .. }) => {
+                Some(cmd.into_core())
+            }
             _ => None,
         })
         .expect("expected OverrideTurnContext op");

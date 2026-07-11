@@ -29,11 +29,11 @@ use agere_file_search::FileMatch;
 use agere_protocol::ThreadId;
 use agere_protocol::openai_models::ModelPreset;
 use agere_protocol::protocol::GetHistoryEntryResponseEvent;
-use agere_protocol::protocol::Op;
 use agere_protocol::protocol::RateLimitSnapshot;
 use agere_utils_approval_presets::ApprovalPreset;
 use agere_utils_fs::AbsolutePathBuf;
 
+use crate::app_command::AppCommand;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
@@ -138,13 +138,19 @@ pub(crate) enum AppEvent {
     /// Submit an op to the specified thread, regardless of current focus.
     SubmitThreadOp {
         thread_id: ThreadId,
-        op: Op,
+        op: AppCommand,
     },
 
     /// Deliver a synthetic history lookup response to a specific thread channel.
     ThreadHistoryEntryResponse {
         thread_id: ThreadId,
         event: GetHistoryEntryResponseEvent,
+    },
+
+    /// Persist a submitted prompt in the cross-session message history.
+    AppendMessageHistoryEntry {
+        thread_id: ThreadId,
+        text: String,
     },
 
     /// Start a new session.
@@ -193,9 +199,12 @@ pub(crate) enum AppEvent {
     #[allow(dead_code)]
     FatalExitRequest(String),
 
-    /// Forward an `Op` to the Agent. Using an `AppEvent` for this avoids
+    /// Forward a command to the Agent. Using an `AppEvent` for this avoids
     /// bubbling channels through layers of widgets.
-    AgereOp(Op),
+    AgereOp(AppCommand),
+
+    /// Restore an output-free interrupted turn into the composer and roll it back.
+    RestoreCancelledTurn(UserMessage),
 
     /// Approve one retry of a recent auto-review denial selected in the TUI.
     ApproveRecentAutoReviewDenial {

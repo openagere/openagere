@@ -211,6 +211,18 @@ pub struct TuiListKeymap {
     pub move_up: Option<KeybindingsSpec>,
     /// Move list selection down.
     pub move_down: Option<KeybindingsSpec>,
+    /// Move focus left (e.g. toolbar controls).
+    pub move_left: Option<KeybindingsSpec>,
+    /// Move focus right (e.g. toolbar controls).
+    pub move_right: Option<KeybindingsSpec>,
+    /// Page the list up.
+    pub page_up: Option<KeybindingsSpec>,
+    /// Page the list down.
+    pub page_down: Option<KeybindingsSpec>,
+    /// Jump to the top of the list.
+    pub jump_top: Option<KeybindingsSpec>,
+    /// Jump to the bottom of the list.
+    pub jump_bottom: Option<KeybindingsSpec>,
     /// Accept current selection.
     pub accept: Option<KeybindingsSpec>,
     /// Cancel and close selection view.

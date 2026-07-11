@@ -216,10 +216,8 @@ async fn exec_approval_uses_approval_id_when_present() {
 
     let mut found = false;
     while let Ok(app_ev) = rx.try_recv() {
-        if let AppEvent::SubmitThreadOp {
-            op: Op::ExecApproval { id, decision, .. },
-            ..
-        } = app_ev
+        if let AppEvent::SubmitThreadOp { op, .. } = app_ev
+            && let Op::ExecApproval { id, decision, .. } = op.into_core()
         {
             assert_eq!(id, "approval-subcommand");
             assert_matches!(decision, agere_protocol::protocol::ReviewDecision::Approved);

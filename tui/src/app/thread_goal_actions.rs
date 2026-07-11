@@ -51,6 +51,36 @@ impl App {
         self.chat_widget.show_goal_summary(goal);
     }
 
+    pub(super) async fn maybe_prompt_resume_paused_goal_after_resume(
+        &mut self,
+        app_server: &mut AppServerSession,
+        thread_id: ThreadId,
+    ) {
+        let result = app_server.thread_goal_get(thread_id).await;
+        if self.current_displayed_thread_id() != Some(thread_id) {
+            return;
+        }
+
+        let response = match result {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::warn!("failed to read thread goal after resume: {err}");
+                return;
+            }
+        };
+
+        let Some(goal) = response.goal else {
+            return;
+        };
+        if matches!(
+            goal.status,
+            ThreadGoalStatus::Paused | ThreadGoalStatus::Blocked | ThreadGoalStatus::UsageLimited
+        ) {
+            self.chat_widget
+                .show_resume_paused_goal_prompt(thread_id, goal.objective);
+        }
+    }
+
     pub(super) async fn open_thread_goal_editor(
         &mut self,
         app_server: &mut AppServerSession,

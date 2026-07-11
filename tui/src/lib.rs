@@ -124,6 +124,7 @@ mod external_rg;
 mod file_search;
 mod frames;
 mod get_git_diff;
+mod git_action_directives;
 mod goal_display;
 mod goal_files;
 mod history_cell;
@@ -134,6 +135,7 @@ mod keymap;
 mod keymap_setup;
 mod line_truncation;
 pub(crate) mod live_wrap;
+mod thread_transcript;
 pub use live_wrap::RowBuilder;
 mod local_chatgpt_auth;
 mod markdown;
@@ -612,6 +614,15 @@ async fn lookup_latest_session_target_with_app_server(
         .data
         .into_iter()
         .find_map(session_target_from_app_server_thread))
+}
+
+/// Source kinds eligible for resume/fork selection.
+pub(crate) fn resume_source_kinds(include_non_interactive: bool) -> Vec<ThreadSourceKind> {
+    let mut source_kinds = vec![ThreadSourceKind::Cli, ThreadSourceKind::VsCode];
+    if include_non_interactive {
+        source_kinds.extend([ThreadSourceKind::Exec, ThreadSourceKind::AppServer]);
+    }
+    source_kinds
 }
 
 fn latest_session_lookup_params(

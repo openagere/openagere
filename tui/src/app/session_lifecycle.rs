@@ -712,6 +712,7 @@ impl App {
                 );
                 self.file_search
                     .update_search_dir(self.config.cwd.to_path_buf());
+                let resumed_thread_id = resumed.session.thread_id;
                 match self
                     .replace_chat_widget_with_app_server_thread(
                         tui, app_server, resumed, /*initial_user_message*/ None,
@@ -731,6 +732,11 @@ impl App {
                             }
                             self.chat_widget.add_plain_history_lines(lines);
                         }
+                        self.maybe_prompt_resume_paused_goal_after_resume(
+                            app_server,
+                            resumed_thread_id,
+                        )
+                        .await;
                     }
                     Err(err) => {
                         self.chat_widget.add_error_message(format!(

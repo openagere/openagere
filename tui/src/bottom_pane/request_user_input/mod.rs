@@ -1061,6 +1061,21 @@ impl BottomPaneView for RequestUserInputOverlay {
         true
     }
 
+    fn will_interrupt_turn_on_key_event(&self, key_event: KeyEvent) -> bool {
+        if KeyBinding::new(KeyCode::Char('c'), KeyModifiers::CONTROL).is_press(key_event) {
+            return self.confirm_unanswered_active()
+                || !self.focus_is_notes()
+                || self.composer.current_text_with_pending().is_empty();
+        }
+
+        key_event.kind != KeyEventKind::Release
+            && !self.confirm_unanswered_active()
+            && !(matches!(key_event.code, KeyCode::Esc)
+                && self.has_options()
+                && self.notes_ui_visible())
+            && self.interrupt_turn_keys.is_pressed(key_event)
+    }
+
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         if key_event.kind == KeyEventKind::Release {
             return;
@@ -1738,7 +1753,10 @@ mod tests {
         overlay.submit_answers();
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { id, response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { id, response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         assert_eq!(id, "turn-1");
@@ -1760,7 +1778,10 @@ mod tests {
         overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");
@@ -1796,7 +1817,10 @@ mod tests {
 
         overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let mut expected = HashMap::new();
@@ -1829,7 +1853,10 @@ mod tests {
         overlay.handle_key_event(KeyEvent::from(KeyCode::Char('2')));
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");
@@ -2079,7 +2106,10 @@ mod tests {
         overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");
@@ -2416,7 +2446,10 @@ mod tests {
         overlay.submit_answers();
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");
@@ -2441,7 +2474,10 @@ mod tests {
         overlay.submit_answers();
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");
@@ -2484,7 +2520,10 @@ mod tests {
         overlay.submit_answers();
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");
@@ -2520,7 +2559,10 @@ mod tests {
         overlay.submit_answers();
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");
@@ -2605,7 +2647,10 @@ mod tests {
         overlay.submit_answers();
 
         let event = rx.try_recv().expect("expected AppEvent");
-        let AppEvent::AgereOp(Op::UserInputAnswer { response, .. }) = event else {
+        let AppEvent::AgereOp(cmd) = event else {
+            panic!("expected UserInputAnswer");
+        };
+        let Op::UserInputAnswer { response, .. } = cmd.into_core() else {
             panic!("expected UserInputAnswer");
         };
         let answer = response.answers.get("q1").expect("answer missing");

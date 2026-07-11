@@ -168,6 +168,21 @@ pub(crate) fn is_altgr(_mods: KeyModifiers) -> bool {
     false
 }
 
+/// Returns true when a key event is a plain (non-control, non-alt) printable
+/// character that should be treated as search/typed input rather than a binding.
+pub(crate) fn is_plain_text_key_event(event: KeyEvent) -> bool {
+    matches!(
+        event,
+        KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers,
+            ..
+        } if !ch.is_ascii_control()
+            && !modifiers.contains(KeyModifiers::CONTROL)
+            && !modifiers.contains(KeyModifiers::ALT)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,23 +31,29 @@ Exit is coordinated via a single event with explicit modes:
 
 ### Ctrl+C
 
-Priority order in the UI layer:
+Priority order in the UI layer (`DOUBLE_PRESS_QUIT_SHORTCUT_ENABLED` is currently `false`):
 
 1. Active modal/view gets the first chance to consume (`BottomPane::on_ctrl_c`).
-   - If the modal handles it, the quit flow stops.
-   - When a modal/popup handles Ctrl+C, the quit shortcut is cleared so dismissing a modal cannot
-     accidentally prime a subsequent Ctrl+C to quit.
-2. If the user has already armed Ctrl+C and the 1 second window has not expired, the second Ctrl+C
-   triggers shutdown-first quit immediately.
-3. Otherwise, `ChatWidget` arms Ctrl+C and shows the quit hint (`ctrl + c again to quit`) for
-   1 second.
-4. If cancellable work is active (streaming/tools/review), `ChatWidget` submits `Op::Interrupt`.
+   - If the modal handles it, the quit flow stops (for example clearing a draft or dismissing a
+     prompt). Cleared drafts are also appended to cross-session message history when a thread id
+     is available.
+   - When an active view's key would interrupt the agent turn (for example
+     `request_user_input` interrupt bindings), the active goal is paused.
+2. If cancellable work is active (streaming/tools/review), `ChatWidget` submits
+   `Op::Interrupt` with restore-prompt-if-no-output behavior, and pauses any active goal.
+3. If idle with no cancellable work, Ctrl+C requests shutdown-first quit immediately
+   (single press; the experimental double-press quit shortcut is disabled).
+
+When the double-press quit experiment is re-enabled:
+
+1. Modal handling still comes first; arming/clearing the quit shortcut follows the same rules.
+2. A second Ctrl+C within ~1s requests shutdown-first quit.
+3. The first press arms the quit hint (`ctrl + c again to quit`) and may also interrupt.
 
 ### Ctrl+D
 
 - Only participates in quit when the composer is empty **and** no modal is active.
-  - On first press, show the quit hint (same as Ctrl+C) and start the 1 second timer.
-  - If pressed again while the hint is visible, request shutdown-first quit.
+- With double-press disabled: requests shutdown-first quit on a single press when idle and empty.
 - With any modal/popup open, key events are routed to the view and Ctrl+D does not attempt to
   quit.
 
@@ -83,11 +89,12 @@ for exit:
 
 At a minimum, we want coverage for:
 
-- Ctrl+C while working interrupts, does not quit.
-- Ctrl+C while idle and empty shows quit hint, then shutdown-first quit on second press.
+- Ctrl+C while working interrupts, does not quit (and may restore the cancelled prompt).
+- Ctrl+C while idle requests shutdown-first quit (single press while double-press is disabled).
 - Ctrl+D with modal open does not quit.
 - `/quit` / `/exit` / `/logout` quit without prompt, but still shutdown-first.
-  - Ctrl+D while idle and empty shows quit hint, then shutdown-first quit on second press.
+- Ctrl+D while idle and empty requests shutdown-first quit (single press while double-press is
+  disabled).
 
 ## History (high level)
 
